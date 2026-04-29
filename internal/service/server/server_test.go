@@ -297,6 +297,7 @@ func TestResponsesHandlerRejectsUnsupportedToolType(t *testing.T) {
 	handler := server.New(server.Config{
 		Bridge: bridge.New(config.Config{
 			DefaultMaxTokens: 1024,
+			Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "claude-test"}},
 			Cache:            config.CacheConfig{Mode: "off"},
 		}, cache.NewMemoryRegistry(), bridge.PluginHooks{}),
 		Provider: &fakeProvider{},
@@ -330,6 +331,7 @@ func TestResponsesHandlerStreamsOpenAIEvents(t *testing.T) {
 	handler := server.New(server.Config{
 		Bridge: bridge.New(config.Config{
 			DefaultMaxTokens: 1024,
+			Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "claude-test"}},
 			Cache:            config.CacheConfig{Mode: "off"},
 		}, cache.NewMemoryRegistry(), bridge.PluginHooks{}),
 		Provider: provider,
@@ -836,6 +838,8 @@ func TestAuthWithNoTokenConfiguredPassesAllRequests(t *testing.T) {
 	handler := server.New(server.Config{
 		Bridge: bridge.New(config.Config{
 			Cache: config.CacheConfig{Mode: "off"},
+			DefaultMaxTokens: 1024,
+			Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "claude-test"}},
 		}, cache.NewMemoryRegistry(), bridge.PluginHooks{}),
 		Provider: &fakeProvider{},
 	})

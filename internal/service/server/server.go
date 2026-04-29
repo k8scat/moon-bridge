@@ -219,6 +219,20 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 	record.Model = responsesRequest.Model
 	// Check if this model routes to an OpenAI Responses provider (skip Anthropic conversion).
 	providerKey := server.bridge.ProviderFor(responsesRequest.Model)
+	// If the model has no route and is not a direct provider/model reference, reject early.
+	if providerKey == "" {
+		log.Warn("请求了未知模型", "model", responsesRequest.Model)
+		payload := openai.ErrorResponse{Error: openai.ErrorObject{
+			Message: fmt.Sprintf("unknown model: %q", responsesRequest.Model),
+			Type:    "invalid_request_error",
+			Code:    "model_not_found",
+		}}
+		record.Error = traceError("model_not_found", fmt.Errorf("model %q not found", responsesRequest.Model))
+		record.OpenAIResponse = payload
+		server.writeTrace(record)
+		writeOpenAIError(writer, http.StatusNotFound, payload)
+		return
+	}
 	if server.providerMgr != nil && server.providerMgr.ProtocolForModel(responsesRequest.Model) == config.ProtocolOpenAIResponse {
 		server.handleOpenAIResponse(writer, request, responsesRequest, providerKey, record)
 		return
@@ -609,12 +623,10 @@ func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *
 	}
 
 	// Resolve provider key from model alias when Bridge.ProviderFor returned empty.
-	resolvedKey := providerKey
-	if resolvedKey == "" {
-		resolvedKey = server.providerMgr.ProviderKeyForModel(responsesRequest.Model)
-	}
-	baseURL := server.providerMgr.ProviderBaseURL(resolvedKey)
-	apiKey := server.providerMgr.ProviderAPIKey(resolvedKey)
+	// providerKey is guaranteed non-empty by the caller (handleResponses).
+	
+	baseURL := server.providerMgr.ProviderBaseURL(providerKey)
+	apiKey := server.providerMgr.ProviderAPIKey(providerKey)
 	if baseURL == "" {
 		log.Error("OpenAI 提供商缺少 base_url", "provider", providerKey)
 		payload := openai.ErrorResponse{Error: openai.ErrorObject{
