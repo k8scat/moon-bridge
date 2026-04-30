@@ -10,9 +10,9 @@ import (
 )
 
 var defaultLogger *slog.Logger
+var defaultHandler *consumeHandler
 
-// LogEntry represents a single log entry.
-// Retained for plugin LogConsumer interface compatibility; not used at runtime.
+// LogEntry represents a single log entry passed through the consume pipeline.
 type LogEntry struct {
 	Timestamp time.Time
 	Level     slog.Level
@@ -22,9 +22,11 @@ type LogEntry struct {
 }
 
 func init() {
-	defaultLogger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+	h := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
-	}))
+	})
+	defaultHandler = newConsumeHandler(h)
+	defaultLogger = slog.New(defaultHandler)
 }
 
 // Level represents a log level.
@@ -61,6 +63,8 @@ type Config struct {
 }
 
 // Init initializes the default logger from config.
+// The inner handler is wrapped with a consumeHandler so that plugins
+// registered via SetConsumeFunc receive every log record.
 func Init(cfg Config) error {
 	lvl, err := ParseLevel(string(cfg.Level))
 	if err != nil {
@@ -71,20 +75,30 @@ func Init(cfg Config) error {
 		out = os.Stderr
 	}
 	opts := &slog.HandlerOptions{Level: lvl}
-	var handler slog.Handler
+	var inner slog.Handler
 	switch strings.ToLower(strings.TrimSpace(cfg.Format)) {
 	case "json":
-		handler = slog.NewJSONHandler(out, opts)
+		inner = slog.NewJSONHandler(out, opts)
 	default:
-		handler = slog.NewTextHandler(out, opts)
+		inner = slog.NewTextHandler(out, opts)
 	}
-	defaultLogger = slog.New(handler)
+	defaultHandler = newConsumeHandler(inner)
+	defaultLogger = slog.New(defaultHandler)
 	return nil
 }
 
 // L returns the default logger.
 func L() *slog.Logger {
 	return defaultLogger
+}
+
+// SetConsumeFunc registers a consume callback that is invoked for every
+// log record before it is serialized. The callback receives a single-entry
+// LogEntry slice and may return it modified (or empty to suppress).
+func SetConsumeFunc(fn ConsumeFunc) {
+	if defaultHandler != nil {
+		defaultHandler.SetConsumeFunc(fn)
+	}
 }
 
 // Debug logs a debug message.

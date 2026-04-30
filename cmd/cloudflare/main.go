@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"log/slog"
 	"os"
 
 	"moonbridge/internal/service/app"
@@ -33,7 +32,7 @@ func main() {
 	//   wrangler secret put MOONBRIDGE_CONFIG < config.yml
 	rawConfig := cloudflare.Getenv("MOONBRIDGE_CONFIG")
 	if rawConfig == "" {
-		slog.Error("MOONBRIDGE_CONFIG environment variable is not set")
+		logger.Error("MOONBRIDGE_CONFIG environment variable is not set")
 		os.Exit(1)
 	}
 
@@ -41,12 +40,12 @@ func main() {
 		ExtensionSpecs: app.BuiltinExtensions().ConfigSpecs(),
 	})
 	if err != nil {
-		slog.Error("parse config", "error", err)
+		logger.Error("parse config", "error", err)
 		os.Exit(1)
 	}
 
 	if cfg.AuthToken == "" && !isDevEnv() {
-		slog.Error("Worker 生产环境必须配置认证：请在 server.auth_token 中设置 Bearer token，" +
+		logger.Error("Worker 生产环境必须配置认证：请在 server.auth_token 中设置 Bearer token，" +
 			"或通过 wrangler secret put MOONBRIDGE_CONFIG 注入包含 auth_token 的配置")
 		os.Exit(1)
 	}
@@ -56,7 +55,7 @@ func main() {
 	modelRoutes := buildModelRoutes(cfg)
 	providerMgr, err := provider.NewProviderManager(providerDefs, modelRoutes)
 	if err != nil {
-		slog.Error("init provider manager", "error", err)
+		logger.Error("init provider manager", "error", err)
 		os.Exit(1)
 	}
 
@@ -76,7 +75,7 @@ func main() {
 				cat.Opts.D1DB = func() *sql.DB {
 					c, err := d1.OpenConnector(binding)
 					if err != nil {
-						slog.Error("D1 connector", "error", err)
+						logger.Error("D1 connector", "error", err)
 						os.Exit(1)
 					}
 					return sql.OpenDB(c)
@@ -86,12 +85,16 @@ func main() {
 	}
 	plugins := cat.NewRegistry(logger.L(), cfg)
 	if err := plugins.InitAll(&cfg); err != nil {
-		slog.Error("init plugins", "error", err)
+		logger.Error("init plugins", "error", err)
 		os.Exit(1)
 	}
 
 	defer plugins.ShutdownAll()
 
+	// Wire plugin LogConsumer into the slog consume pipeline.
+	logger.SetConsumeFunc(func(entries []logger.LogEntry) []logger.LogEntry {
+		return plugins.ConsumeGlobalLog(entries)
+	})
 
 	// Initialize persistence layer (db.Registry).
 	ctx := context.Background()
@@ -107,7 +110,7 @@ func main() {
 		}
 	}
 	if err := dbRegistry.Init(ctx, cfg.Persistence.ActiveProvider); err != nil {
-		slog.Error("init persistence", "error", err)
+		logger.Error("init persistence", "error", err)
 		os.Exit(1)
 	}
 	defer dbRegistry.Shutdown()

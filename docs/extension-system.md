@@ -89,7 +89,7 @@ type BasePlugin struct{}  // 提供所有方法的 no-op 默认实现
 
 | 接口 | 方法 | 作用时机 |
 |------|------|----------|
-| `LogConsumer` | `ConsumeLog(ctx, entries) []LogEntry` | **SUSPENDED** — 保留类型，无运行时调用入口。后续以 slog.Handler 恢复 |
+| `LogConsumer` | `ConsumeLog(ctx, entries) []LogEntry` | 每条 slog 日志通过 consume pipeline 分发，可拦截、修改或抑制 |
 
 ## 注册表（Registry）
 

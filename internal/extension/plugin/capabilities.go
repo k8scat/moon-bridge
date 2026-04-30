@@ -173,10 +173,8 @@ type RouteRegistrar interface {
 
 // --- Log pipeline capabilities ---
 
-// LogConsumer is a retained type for plugin interface compatibility.
-// Current status: SUSPENDED — no runtime call site wires data into LogConsumer.
-// Implementing this interface in new plugins is NOT recommended.
-// Data flow will be restored in the future via a slog.Handler adapter.
+// LogConsumer is called for every slog log record via the consume pipeline.
+// Implementations receive LogEntry slices and may inspect, modify, or suppress them.
 type LogConsumer interface {
 	ConsumeLog(ctx *RequestContext, entries []logger.LogEntry) []logger.LogEntry
 }
