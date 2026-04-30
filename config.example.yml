@@ -118,6 +118,7 @@ provider:
             cache_write_price: 1
             cache_read_price: 0.02
     kimi:
+      # Anthropic-compatible base URL for Kimi/Moonshot.
       base_url: "https://api.kimi.com/coding/"
       api_key: "replace-with-kimi-api-key"
       version: "2023-06-01"

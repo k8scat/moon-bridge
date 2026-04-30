@@ -16,6 +16,8 @@ services:
     volumes:
       - ./config.yml:/config/config.yml:ro
       - ./data:/app/data
+      - ./logs:/app/logs
+      - ./trace:/app/trace
     healthcheck:
       test:
         - CMD

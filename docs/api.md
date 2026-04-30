@@ -1,19 +1,19 @@
 # API 接口
 
-Moon Bridge 对外暴露两个 HTTP 端点，兼容 OpenAI Responses API 的子集。
+Moon Bridge 对外暴露 OpenAI Responses 兼容端点和可选的管理端点。
 
 ## 基础信息
 
 | 项目 | 默认值 |
 |------|--------|
 | 监听地址 | `127.0.0.1:38440` |
-| 认证 | 无（内置认证在上游提供商层处理） |
+| 认证 | 默认无本地认证；配置 `server.auth_token` 后要求 `Authorization: Bearer <token>` |
 
 可通过 `-addr` 覆盖监听地址，通过 `config.yml` 的 `server.addr` 配置。
 
 ## `POST /v1/responses`
 
-主要端点，Codex CLI 发送对话请求。支持流式和非流式。
+主要端点，Codex CLI 发送对话请求。支持流式和非流式。`POST /responses` 是同一处理器的兼容路径。
 
 ### 请求格式
 
@@ -182,6 +182,8 @@ data: {"type":"response.completed","response":{...}}
 
 返回模型目录，用于 Codex CLI 的模型发现。
 
+`GET /models` 是同一处理器的兼容路径。
+
 ### 响应格式
 
 ```json
@@ -220,7 +222,9 @@ data: {"type":"response.completed","response":{...}}
 2. 追加 `provider.routes` 中的别名作为补充
 3. 为每个模型生成 `base_instructions`（来自 `default_instructions.txt` 模板）
 
-## `GET /v1/admin/metrics`
+## 开发中：`GET /v1/admin/metrics`
+
+> 该端点来自 dev 分支的持久化/metrics 工作，不视为稳定公开 API。当 `metrics` 扩展启用并成功绑定数据库 store 时，会注册该管理端点；如果没有可用数据库或 metrics 被禁用，路由不会注册。
 
 启用 `metrics` 扩展并绑定数据库 Provider 后可用。接口返回最近请求指标，支持 `limit`、`offset`、`model`、`status`、`since`、`until`、`order=asc` 查询参数。
 
@@ -273,7 +277,7 @@ Moon Bridge 提供以下命令行开关：
 
 | 开关 | 说明 |
 |------|------|
-| `-config` | 指定配置文件路径（默认 `config.yml`） |
+| `-config` | 指定配置文件路径；未指定时读取 `${XDG_CONFIG_HOME:-$HOME/.config}/moonbridge/config.yml` |
 | `-addr` | 覆盖监听地址 |
 | `-mode` | 覆盖运行模式 |
 | `-print-addr` | 打印监听地址并退出 |
