@@ -314,8 +314,8 @@ session 级 token 和费用统计。
 请求/响应转储系统。
 
 - 目录结构：
-  - Transform 模式：`trace/Transform/{session_id}/{model}/Response/{n}.json` 和 `trace/Transform/{session_id}/{model}/Anthropic/{n}.json`
-  - Capture 模式：`trace/Capture/{Response|Anthropic}/{session_id}/{n}.json`
+  - Transform 模式：`data/trace/Transform/{session_id}/{model}/Response/{n}.json` 和 `data/trace/Transform/{session_id}/{model}/Anthropic/{n}.json`
+  - Capture 模式：`data/trace/Capture/{Response|Anthropic}/{session_id}/{n}.json`
 - 序列化时自动脱敏 `Authorization`、`x-api-key` 等敏感 Header（替换为 `[REDACTED]`）。
 - 文件权限 600，目录权限 700。
 

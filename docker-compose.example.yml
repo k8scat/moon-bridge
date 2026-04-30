@@ -15,8 +15,7 @@ services:
       - "127.0.0.1:38440:38440"
     volumes:
       - ./config.yml:/config/config.yml:ro
-      - ./logs:/app/logs
-      - ./trace:/app/trace
+      - ./data:/app/data
     healthcheck:
       test:
         - CMD
