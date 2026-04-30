@@ -114,6 +114,13 @@ def migrate(input_path: str, output_path: str) -> None:
                     f"adding as additional offer"
                 )
 
+        # Migrate provider-level priority to each offer.
+        provider_priority = pdef.pop("priority", None)
+        if provider_priority is not None:
+            for offer_entry in offers:
+                if "priority" not in offer_entry:
+                    offer_entry["priority"] = provider_priority
+
         if offers:
             pdef["offers"] = offers
         else:
@@ -124,7 +131,7 @@ def migrate(input_path: str, output_path: str) -> None:
         for field in list(pdef.keys()):
             if field in (
                 "base_url", "api_key", "version", "user_agent", "protocol",
-                "priority", "web_search", "extensions", "offers",
+                "web_search", "extensions", "offers",
             ):
                 continue
             warnings.warn(

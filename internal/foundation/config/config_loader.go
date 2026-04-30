@@ -122,6 +122,7 @@ type ModelDefFileConfig struct {
 type OfferFileConfig struct {
 	Model        string                  `yaml:"model" json:"model"`
 	UpstreamName string                  `yaml:"upstream_name,omitempty" json:"upstream_name,omitempty"`
+	Priority     int                     `yaml:"priority,omitempty" json:"priority,omitempty"`
 	Pricing      ModelPricingFileConfig  `yaml:"pricing,omitempty" json:"pricing,omitempty"`
 	Overrides    *ModelDefFileConfig     `yaml:"overrides,omitempty" json:"overrides,omitempty"`
 }
@@ -132,7 +133,6 @@ type ProviderDefFileConfig struct {
 	Version    string                           `yaml:"version,omitempty" json:"version,omitempty"`
 	UserAgent  string                           `yaml:"user_agent,omitempty" json:"user_agent,omitempty"`
 	Protocol   string                           `yaml:"protocol,omitempty" json:"protocol,omitempty"`
-	Priority   int                              `yaml:"priority,omitempty" json:"priority,omitempty"`
 	WebSearch  WebSearchFileConfig              `yaml:"web_search,omitempty" json:"web_search,omitempty"`
 	Extensions map[string]ExtensionFileConfig   `yaml:"extensions,omitempty" json:"extensions,omitempty"`
 	Offers     []OfferFileConfig                `yaml:"offers,omitempty" json:"offers,omitempty"`
@@ -458,6 +458,7 @@ func fromProviderDefFileConfig(fileConfig map[string]ProviderDefFileConfig, spec
 			entry := OfferEntry{
 				Model:        trimmedModel,
 				UpstreamName: strings.TrimSpace(offer.UpstreamName),
+				Priority:     offer.Priority,
 				Pricing: ModelPricing{
 					InputPrice:      offer.Pricing.InputPrice,
 					OutputPrice:     offer.Pricing.OutputPrice,
@@ -527,7 +528,6 @@ func fromProviderDefFileConfig(fileConfig map[string]ProviderDefFileConfig, spec
 			Version:          valueOrDefault(strings.TrimSpace(def.Version), "2023-06-01"),
 			UserAgent:        strings.TrimSpace(def.UserAgent),
 			Protocol:         strings.TrimSpace(def.Protocol),
-			Priority:         def.Priority,
 			WebSearchSupport: wsSupport,
 			WebSearchMaxUses: def.WebSearch.MaxUses,
 			TavilyAPIKey:     strings.TrimSpace(def.WebSearch.TavilyAPIKey),

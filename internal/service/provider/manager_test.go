@@ -1,6 +1,10 @@
 package provider
 
-import "testing"
+import (
+	"testing"
+
+	"moonbridge/internal/foundation/config"
+)
 
 func TestProviderManagerRoutesProtocolAndUpstreamModel(t *testing.T) {
 	manager, err := NewProviderManager(map[string]ProviderConfig{
@@ -253,19 +257,23 @@ func TestResolveModel_ProviderPriority(t *testing.T) {
 		"cheap": {
 			BaseURL:    "https://cheap.test",
 			APIKey:     "key-cheap",
-			Priority:   10,
-			ModelNames: []string{"shared-model"},
+			Offers: []config.OfferEntry{
+				{Model: "shared-model", Priority: 10},
+			},
 		},
 		"fast": {
 			BaseURL:    "https://fast.test",
 			APIKey:     "key-fast",
-			Priority:   5,
-			ModelNames: []string{"shared-model"},
+			Offers: []config.OfferEntry{
+				{Model: "shared-model", Priority: 5},
+			},
 		},
 		"zulu": {
 			BaseURL:    "https://z.test",
 			APIKey:     "key-z",
-			ModelNames: []string{"shared-model"},
+			Offers: []config.OfferEntry{
+				{Model: "shared-model"},
+			},
 		},
 	}, nil)
 	if err != nil {

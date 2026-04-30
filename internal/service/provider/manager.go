@@ -31,12 +31,17 @@ type ProviderConfig struct {
 	Version          string                 `yaml:"version"`
 	UserAgent        string                 `yaml:"user_agent"`
 	Protocol         string                 // "anthropic" (default) or "openai-response"
-	Priority         int                    // lower value = higher priority (0 is highest)
 	HTTP             HTTPConfig             `yaml:"http"`
 	WebSearchSupport string                 // "auto", "enabled", "disabled", "injected", or "" (inherit global)
 	ModelNames       []string               // upstream model names for this provider
 	Models           map[string]ModelMeta   // full model metadata (upstream name -> meta) [deprecated: use Offers]
 	Offers           []config.OfferEntry    // model offerings with pricing (replaces Models)
+}
+
+// modelProviderEntry is a reverse-index entry: provider key + offer priority.
+type modelProviderEntry struct {
+	providerKey string
+	priority    int
 }
 
 // ModelRoute maps a model alias to a provider and an upstream model name.
@@ -80,7 +85,7 @@ type ProviderManager struct {
 	routes     map[string]ModelRoute        // model alias -> route
 	defaultK   string                       // default provider key
 	resolvedWS map[string]string            // provider key -> resolved web search support
-	modelProviders map[string][]string      // upstream model name -> provider keys (reverse index)
+	modelProviders map[string][]modelProviderEntry // upstream model name -> (provider key, priority) (reverse index)
 }
 
 // NewProviderManager creates a ProviderManager from provider configs and model routes.
@@ -122,10 +127,10 @@ func NewProviderManager(providerCfgs map[string]ProviderConfig, routes map[strin
 		return nil, fmt.Errorf("at least one provider must be configured")
 	}
 	// Build reverse index: model name -> provider keys (for dynamic model routing).
-	pm.modelProviders = make(map[string][]string, len(providerCfgs))
+	pm.modelProviders = make(map[string][]modelProviderEntry, len(providerCfgs))
 	for key, cfg := range providerCfgs {
 		for _, modelName := range cfg.ModelNames {
-			pm.modelProviders[modelName] = append(pm.modelProviders[modelName], key)
+			pm.modelProviders[modelName] = append(pm.modelProviders[modelName], modelProviderEntry{providerKey: key, priority: 0})
 		}
 		// Also index from Offers.
 		for _, offer := range cfg.Offers {
@@ -134,7 +139,7 @@ func NewProviderManager(providerCfgs map[string]ProviderConfig, routes map[strin
 				modelName = offer.UpstreamName
 			}
 			if modelName != "" {
-				pm.modelProviders[modelName] = append(pm.modelProviders[modelName], key)
+				pm.modelProviders[modelName] = append(pm.modelProviders[modelName], modelProviderEntry{providerKey: key, priority: offer.Priority})
 			}
 		}
 	}
@@ -216,28 +221,28 @@ func (pm *ProviderManager) ResolveModel(modelName string) (*ResolvedRoute, error
 	}
 
 	// 3. Dynamic model: look up reverse index (provider catalog)
-	if providerKeys, ok := pm.modelProviders[modelName]; ok && len(providerKeys) > 0 {
-			sorted := make([]string, len(providerKeys))
-			copy(sorted, providerKeys)
+	if providerEntries, ok := pm.modelProviders[modelName]; ok && len(providerEntries) > 0 {
+			sorted := make([]modelProviderEntry, len(providerEntries))
+			copy(sorted, providerEntries)
 			sort.Slice(sorted, func(i, j int) bool {
-				pi := pm.providers[sorted[i]].Priority
-				pj := pm.providers[sorted[j]].Priority
+				pi := sorted[i].priority
+				pj := sorted[j].priority
 				if pi != pj {
 					return pi < pj // lower priority = higher precedence (0 is highest)
 				}
-				return sorted[i] < sorted[j] // tiebreaker: provider key dictionary order
+				return sorted[i].providerKey < sorted[j].providerKey // tiebreaker: provider key dictionary order
 			})
 
 		candidates := make([]ProviderCandidate, 0, len(sorted))
-		for _, pk := range sorted {
-			client := pm.clients[pk]
+		for _, entry := range sorted {
+			client := pm.clients[entry.providerKey]
 			if client == nil {
 				continue
 			}
 			candidates = append(candidates, ProviderCandidate{
-				ProviderKey:   pk,
+				ProviderKey:   entry.providerKey,
 				UpstreamModel: modelName,
-				Protocol:      pm.ProtocolForKey(pk),
+				Protocol:      pm.ProtocolForKey(entry.providerKey),
 				Client:        client,
 			})
 		}

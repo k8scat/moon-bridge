@@ -195,7 +195,6 @@ func buildProviderDefsFromConfig(cfg config.Config) map[string]provider.Provider
 			Version:          def.Version,
 			UserAgent:        def.UserAgent,
 			Protocol:         def.Protocol,
-			Priority:         def.Priority,
 			WebSearchSupport: string(def.WebSearchSupport),
 			ModelNames:       modelNames,
 			Models:           models,

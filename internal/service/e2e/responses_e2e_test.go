@@ -166,7 +166,6 @@ func buildProviderDefsForTest(cfg config.Config) map[string]provider.ProviderCon
 			Version:          def.Version,
 			UserAgent:        def.UserAgent,
 			Protocol:         def.Protocol,
-			Priority:         def.Priority,
 			WebSearchSupport: string(def.WebSearchSupport),
 			ModelNames:       modelNames,
 			Models:           models,

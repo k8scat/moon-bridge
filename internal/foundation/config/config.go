@@ -115,7 +115,6 @@ type ProviderDef struct {
 	Version          string
 	UserAgent        string
 	Protocol         string // "anthropic" (default) or "openai-response"
-	Priority         int
 	WebSearchSupport WebSearchSupport
 	WebSearchMaxUses int
 	TavilyAPIKey     string
@@ -192,6 +191,7 @@ type ModelDef struct {
 type OfferEntry struct {
 	Model        string      // references models.<slug>
 	UpstreamName string      // optional, upstream model name (empty = same as slug)
+	Priority     int         // lower value = higher priority (0 is highest)
 	Pricing      ModelPricing
 	Overrides    *ModelDef   // optional provider-specific overrides
 }
