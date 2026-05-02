@@ -90,23 +90,11 @@ var (
 在模型配置中设置 `extensions.deepseek_v4.enabled: true`：
 
 ```yaml
-provider:
-  providers:
-    deepseek:
-      models:
-        deepseek-v4-pro:
-          extensions:
-            deepseek_v4:
-              enabled: true
 ```
 
 或通过 routes 启用：
 
 ```yaml
-provider:
-  routes:
-    moonbridge:
-      to: "deepseek/deepseek-v4-pro"
     # routes 自动继承模型配置中的 deepseek_v4 extension 设置
 ```
 
@@ -162,39 +150,30 @@ var (
 ### 配置方式
 
 ```yaml
-provider:
-  providers:
-    my-provider:
-      base_url: "https://..."
-      api_key: "..."
-      web_search:
-        support: "injected"
-        tavily_api_key: "tvly-..."
-        firecrawl_api_key: "fc-..."
-        search_max_rounds: 5
+providers:
+  my-provider:
+    base_url: "https://..."
+    api_key: "..."
+    web_search:
+      support: "injected"
+      tavily_api_key: "tvly-..."
+      firecrawl_api_key: "fc-..."
+      search_max_rounds: 5
 ```
 
 或全局配置：
 
 ```yaml
-provider:
-  web_search:
-    support: "injected"
-    tavily_api_key: "tvly-..."
-    firecrawl_api_key: "fc-..."
-    search_max_rounds: 5
+web_search:
+  support: "injected"
+  tavily_api_key: "tvly-..."
+  firecrawl_api_key: "fc-..."
+  search_max_rounds: 5
 ```
 
 模型级别覆盖：
 
 ```yaml
-provider:
-  providers:
-    my-provider:
-      models:
-        my-model:
-          web_search:
-            support: "enabled"  # 覆盖提供商级别的 injected
 ```
 
 ---
@@ -297,14 +276,11 @@ extensions:
       model: "kimi-vision-model"
       max_tokens: 4096
 
-provider:
-  providers:
-    main:
-      models:
-        my-model:
-          extensions:
-            visual:
-              enabled: true
+models:
+  my-model:
+    extensions:
+      visual:
+        enabled: true
 ```
 
 ### 与 Provider 的交互
@@ -396,3 +372,16 @@ extensions:
 ```
 
 当 metrics 成功绑定数据库 store 后，会注册 `GET /v1/admin/metrics`。支持 `limit`、`offset`、`model`、`status`、`since`、`until`、`order=asc` 查询参数。
+models:
+  deepseek-v4-pro:
+    extensions:
+      deepseek_v4:
+        enabled: true
+routes:
+  moonbridge:
+    model: deepseek-v4-pro
+    provider: deepseek
+models:
+  my-model:
+    web_search:
+      support: "enabled"  # 覆盖提供商级别的 injected

@@ -64,7 +64,10 @@ end
 应用服务层，组装各组件并对外提供服务：
 
 - **`internal/service/server`**：HTTP 服务器。处理 `/v1/responses` / `/responses`（POST）和 `/v1/models` / `/models`（GET），并允许插件注册额外路由。负责本地 Bearer token 认证、请求路由（判断模型走 Anthropic 转换还是 OpenAI 直通）、会话管理、流式 SSE 输出、用量统计、请求跟踪。
-- **`internal/service/provider`**：多提供商管理。`ProviderManager` 维护多个 `anthropic.Client` 实例，按模型别名路由到对应提供商，支持协议自动发现和 Web Search 模式探测。
+- **`internal/service/provider`**：多提供商管理。`ProviderManager` 维护多个 `anthropic.Client` 实例，通过 `ResolveModel()` 按三级优先级（route alias → direct ref → dynamic reverse index）路由模型别名，返回 `ResolvedRoute`（包含按 offer priority 排序的 `ProviderCandidate` 候选链）。支持协议自动发现、Web Search 模式探测和 fallback 链。
+- **`internal/service/api`**：管理 API 路由层（`/api/v1/*`），提供 Provider、Model、Route、Settings、Config、Changes、Status 等 38 个 RESTful 端点的 Handler。
+- **`internal/service/store`**：ConfigStore 持久化抽象和 SQLite 实现。管理 staged change 的暂存、校验、事务性 apply 和回滚，通过 `ReloadFunc` 通知 Runtime 原子替换。
+- **`internal/service/runtime`**：读写分离的运行时层。`Runtime` 持有 `atomic.Pointer[ConfigSnapshot]` 提供无锁并发读；`Reload()` 构建新的 ProviderManager 并原子替换快照。
 - **`internal/service/proxy`**：Capture 模式下的直通代理。`AnthropicServer` / `ResponseServer` 简单转发 HTTP 请求/响应（可选跟踪）。
 - **`internal/service/stats`**：会话用量统计。累计 token 和费用、支持按模型细分、缓存命中率计算、格式化输出。
 - **`internal/service/trace`**：请求跟踪。将每次请求的 HTTP 请求/响应、转换后的 Anthropic 请求/响应、流事件序列写入磁盘。
@@ -243,9 +246,6 @@ Moon Bridge 支持多提供商和多模型路由。配置通过顶层 `providers
   - Bridge 层返回的 `RequestError` 直接转为 OpenAI 错误格式。
   - Anthropic Provider 错误通过 `ProviderError.OpenAIStatus()` 映射为等价 HTTP 状态码。
 
-1. 直接引用：`provider/model` 或 `model(provider)` 格式
-2. Routes 映射：`routes` 中的别名
-3. 默认模型：`default_model` 配置
 
 ## 缓存系统
 
@@ -512,3 +512,8 @@ routes:
 | `hybrid` | 同时使用两种策略 |
 
 `MemoryRegistry` 跟踪每个缓存键的状态（冷/预热中/已预热/过期），支持跨请求缓存复用。
+`ProviderManager.ResolveModel()` 使用三级优先级模型别名解析：
+
+1. **Route alias**（最高优先级）：在 `routes` 表中精确匹配后，返回 `ResolvedRoute{Candidates: [ProviderCandidate{ProviderKey, UpstreamModel, Protocol, Client}]}`
+2. **Direct ref**（次高优先级）：`provider/model` 或 `model(provider)` 格式直接引用，直接定位到具体 Provider
+3. **Dynamic reverse index**（最低优先级）：按上游模型名在 `modelProviders` 反向索引中查找所有提供该模型的 provider，按 offer priority（低值优先）排序后生成候选链 `[]ProviderCandidate`。第一个可用 candidate 为 preferred，其余作为 fallback 候选

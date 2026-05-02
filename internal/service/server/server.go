@@ -17,6 +17,7 @@ import (
 	"moonbridge/internal/extension/visual"
 	"moonbridge/internal/extension/websearchinjected"
 	"moonbridge/internal/foundation/config"
+	"moonbridge/internal/foundation/logger"
 	"moonbridge/internal/foundation/openai"
 	"moonbridge/internal/foundation/session"
 	"moonbridge/internal/protocol/anthropic"

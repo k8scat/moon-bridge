@@ -205,14 +205,6 @@ extensions:
       reinforce_instructions: true
       reinforce_prompt: "[System Reminder]: ...\n[User]:"
 
-provider:
-  providers:
-    deepseek:
-      models:
-        deepseek-v4-pro:
-          extensions:
-            deepseek_v4:
-              enabled: true
 ```
 
 插件通过 `ConfigSpecProvider` 声明自己的配置结构：
@@ -367,3 +359,8 @@ type HookContext struct {
 ```
 
 Session data 的隔离由 `session.Session` 保证——不同的会话（由 `Session_id` 或 `X-Codex-Window-Id` 头标识）使用不同的 `ExtensionData` 映射。
+models:
+  deepseek-v4-pro:
+    extensions:
+      deepseek_v4:
+        enabled: true

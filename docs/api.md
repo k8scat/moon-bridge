@@ -218,9 +218,10 @@ data: {"type":"response.completed","response":{...}}
 
 模型目录的生成逻辑在 `internal/extension/codex/catalog.go` 的 `BuildModelInfosFromConfig()` 中：
 
-1. 优先使用 `provider.providers.<key>.models` 中的模型目录
-2. 追加 `provider.routes` 中的别名作为补充
-3. 为每个模型生成 `base_instructions`（来自 `default_instructions.txt` 模板）
+1. 优先使用顶层 `models` 中的模型定义（每个 slug 生成一个 `ModelInfo` 条目）
+2. 通过 `providers.<key>.offers[]` 将模型与 Provider 关联，定价在 offer 层配置
+3. 追加 `routes` 中的别名作为补充（去重，未在 models 中出现的别名才追加）
+4. 为每个模型生成 `base_instructions`（来自 `default_instructions.txt` 模板）
 
 ## 开发中：`GET /v1/admin/metrics`
 
@@ -294,7 +295,7 @@ Moon Bridge 提供以下命令行开关：
 
 ## 管理 API (`/api/v1/*`)
 
-管理 API 提供可视化面板和自动化工具所需的 RESTful 端点。所有端点路径前缀为 `/api/v1`（WebUI 自动添加该前缀）。认证方式与主 API 一致（Bearer Token）。
+管理 API 提供可视化面板和自动化工具所需的 RESTful 端点，共 **38 个端点**，路径前缀为 `/api/v1`。认证方式与主 API 一致（Bearer Token）。
 
 ### Provider 管理
 
@@ -491,3 +492,13 @@ Moon Bridge 提供以下命令行开关：
   "offset": 0
 }
 ```
+
+Offer 字段说明：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `model` | string | 引用顶层 `models` 中的模型 slug |
+| `upstream_name` | string | 可选，上游真实模型名（为空时等同于 slug） |
+| `priority` | int | 路由优先级，数值越小优先级越高（0 最高）。用于多 Provider 提供同一模型时的排序 |
+| `pricing` | object | 该 Provider 对该模型的定价（input_price / output_price / cache_write_price / cache_read_price） |
+| `overrides` | object | 可选，覆盖顶层模型元数据（如 context_window、max_output_tokens 等） |
