@@ -65,10 +65,8 @@ func (server *Server) sessionForRequest(request *http.Request) *session.Session 
 
 	// Enforce max sessions limit when creating a new session.
 	if maxSessions := server.maxSessions(); maxSessions > 0 && len(server.sessions) >= maxSessions {
-		// Return an ephemeral session (not stored) when the limit is reached.
-		sess := session.NewWithID(key)
-		sess.InitExtensions(nil)
-		return sess
+		// Evict the LRU (least recently used) session.
+		server.evictLRUSessionLocked()
 	}
 
 	sess := session.NewWithID(key)
@@ -83,6 +81,24 @@ func (server *Server) pruneSessionsLocked(now time.Time) {
 		if now.Sub(entry.lastUsed) > ttl {
 			delete(server.sessions, key)
 		}
+	}
+}
+
+// evictLRUSessionLocked removes the session with the oldest lastUsed timestamp.
+// Must be called with server.sessionsMu held.
+func (server *Server) evictLRUSessionLocked() {
+	var oldestKey string
+	var oldestTime time.Time
+	first := true
+	for key, entry := range server.sessions {
+		if first || entry.lastUsed.Before(oldestTime) {
+			oldestKey = key
+			oldestTime = entry.lastUsed
+			first = false
+		}
+	}
+	if oldestKey != "" {
+		delete(server.sessions, oldestKey)
 	}
 }
 

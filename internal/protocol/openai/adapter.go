@@ -1050,6 +1050,9 @@ func copyContentBlocks(blocks []format.CoreContentBlock) []format.CoreContentBlo
 
 // cloneResponse creates a shallow copy of a Response for use in stream events.
 func cloneResponse(r *Response) Response {
+	if r == nil {
+		return Response{}
+	}
 	return *r
 }
 

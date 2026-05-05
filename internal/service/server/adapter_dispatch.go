@@ -51,6 +51,20 @@ func (s *Server) handleWithAdapters(
 	ctx := r.Context()
 	log := slog.Default().With("model", openAIReq.Model, "path", "adapter")
 
+	// Defense-in-depth: ensure model is non-empty.
+	if openAIReq.Model == "" {
+		log.Warn("adapter path: empty model")
+		payload := openai.ErrorResponse{
+			Error: openai.ErrorObject{
+				Message: "model is required",
+				Type:    "invalid_request_error",
+				Code:    "missing_model",
+			},
+		}
+		writeOpenAIError(w, http.StatusBadRequest, payload)
+		return
+	}
+
 	// Get or create session for this request.
 	requestStart := time.Now()
 	sess := s.sessionForRequest(r)
@@ -315,7 +329,7 @@ func (s *Server) handleWithAdapters(
 				CacheReadInputTokens:     coreResp.Usage.CachedInputTokens,
 			}, false)
 		}
-		s.onRequestCompleted(openAIReq.Model, openAIReq.Model, requestStart, usage, 0, "success", "")
+		s.onRequestCompleted(openAIReq.Model, preferred.UpstreamModel, requestStart, usage, 0, "success", "")
 
 		// Record usage statistics.
 		if s.stats != nil {
@@ -497,7 +511,10 @@ func (s *Server) handleAdapterStream(
 				finalResp = &lfResp
 			}
 		}
-		writeSSE(w, ev)
+		if err := writeSSE(w, ev); err != nil {
+			log.Warn("adapter stream: SSE write failed, aborting stream", "error", err)
+			break
+		}
 	}
 
 	// Record usage statistics after stream completes.
@@ -516,7 +533,7 @@ func (s *Server) handleAdapterStream(
 	}
 
 	// Notify plugin hooks for metrics tracking.
-	if s.pluginRegistry != nil && finalResp != nil {
+	if s.pluginRegistry != nil {
 		usage := zeroUsage(string(config.ProtocolAnthropic), "anthropic_stream")
 		if finalUsage.InputTokens > 0 || finalUsage.OutputTokens > 0 {
 			usage = usageFromAnthropic(string(config.ProtocolAnthropic), "core_stream", anthropic.Usage{

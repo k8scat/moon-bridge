@@ -219,13 +219,23 @@ func writeJSON(writer http.ResponseWriter, status int, payload any) {
 func writeOpenAIError(writer http.ResponseWriter, status int, payload openai.ErrorResponse) {
 	writeJSON(writer, status, payload)
 }
-func writeSSE(writer http.ResponseWriter, event openai.StreamEvent) {
-	data, _ := json.Marshal(event.Data)
-	_, _ = writer.Write([]byte("event: " + event.Event + "\n"))
-	_, _ = writer.Write([]byte("data: " + string(data) + "\n\n"))
+func writeSSE(writer http.ResponseWriter, event openai.StreamEvent) error {
+	var payload []byte
+	if event.Data == nil {
+		payload = []byte("{}")
+	} else {
+		payload, _ = json.Marshal(event.Data)
+	}
+	if _, err := writer.Write([]byte("event: " + event.Event + "\n")); err != nil {
+		return err
+	}
+	if _, err := writer.Write([]byte("data: " + string(payload) + "\n\n")); err != nil {
+		return err
+	}
 	if flusher, ok := writer.(http.Flusher); ok {
 		flusher.Flush()
 	}
+	return nil
 }
 
 func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *http.Request, responsesRequest openai.ResponsesRequest, candidates []provider.ProviderCandidate, record mbtrace.Record) {

@@ -82,6 +82,11 @@ func (a *AnthropicProviderAdapter) FromCoreRequest(ctx context.Context, req *for
 	// Step 1: Allow plugins to mutate the CoreRequest before conversion.
 	a.hooks.MutateCoreRequest(ctx, req)
 
+	// Ensure cache manager is available before proceeding.
+	if a.cacheMgr == nil {
+		return nil, fmt.Errorf("anthropic adapter: cache manager is nil")
+	}
+
 	// Step 2: Build the anthropic MessageRequest.
 	anthropicReq := MessageRequest{
 		Model:         req.Model,
@@ -111,11 +116,10 @@ func (a *AnthropicProviderAdapter) FromCoreRequest(ctx context.Context, req *for
 	if len(req.Tools) > 0 {
 		anthropicReq.Tools = make([]Tool, 0, len(req.Tools))
 		for _, t := range req.Tools {
-			anthropicReq.Tools = append(anthropicReq.Tools, Tool{
-				Name:        t.Name,
-				Type:        "custom",
-				Description: t.Description,
-				InputSchema: t.InputSchema,
+		anthropicReq.Tools = append(anthropicReq.Tools, Tool{
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: t.InputSchema,
 			})
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"log/slog"
@@ -150,14 +151,18 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 					logger.Warn("config store 种子导入失败", "error", err)
 				}
 			}
-		} else {
-			logger.Warn("config store 加载失败", "error", loadErr)
+		} else if loadErr != nil {
+			if strings.Contains(loadErr.Error(), "config not seeded") {
+				logger.Info("persistence store is empty, skipping DB config load")
+			} else {
+				logger.Warn("config store 加载失败", "error", loadErr)
+			}
 		}
 	} else {
 		logger.Warn("config store 不可用，跳过持久化引导")
 	}
 
-	// === Phase 3: Build Runtime ===
+		// === Phase 3: Build Runtime ===
 	rt := runtime.NewRuntime(cfg, providerMgr, pricing)
 
 	// === Phase 4: Build Server with Runtime ===

@@ -476,6 +476,14 @@ func (cfg Config) WebSearchForProvider(providerKey string) WebSearchSupport {
 // WebSearchForModel returns the resolved web search support for a given model alias.
 // Resolution order: route -> model (in provider catalog) -> provider -> global ->
 // provider catalog fallback for pure model names.
+//
+// NOTE on independent implementations: WebSearchForModel and ExtensionEnabled share a
+// similar topological resolution chain (route → model → provider → global) but each has
+// three distinct branches (route alias / direct "provider/model" ref / pure model name)
+// with type-specific field access at every level. Encoding this as a generic resolveChain
+// with (T, bool) closures would be more verbose than the current explicit code.
+// ExtensionRawConfig is a fundamentally different merge-first operation, not first-match.
+// These methods are kept as independent implementations for clarity.
 func (cfg Config) WebSearchForModel(modelAlias string) WebSearchSupport {
 	// 1. Route-level override.
 	if route, ok := cfg.Routes[modelAlias]; ok {
