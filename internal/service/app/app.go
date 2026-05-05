@@ -167,7 +167,7 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 	// Optionally create the experimental adapter registry.
 	// Create the adapter registry for Core format dispatch.
 	adapterReg := format.NewRegistry()
-	coreHooks := format.CorePluginHooks{}.WithDefaults()
+	coreHooks := plugins.CorePluginHooks()
 
 	// Inbound: OpenAI Responses client adapter.
 	oaiAdapter := openai.NewOpenAIAdapter(cfg, coreHooks)
