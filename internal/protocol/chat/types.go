@@ -32,6 +32,10 @@ type ChatMessage struct {
 	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
 	ToolCallID string      `json:"tool_call_id,omitempty"`
 	Name       string      `json:"name,omitempty"`
+	// ReasoningContent is a non-standard field used by providers like DeepSeek
+	// to return chain-of-thought reasoning. When present, it must be echoed
+	// back in follow-up assistant messages.
+	ReasoningContent string `json:"reasoning_content,omitempty"`
 }
 
 // ContentPart is a multimodal content part (text or image_url).
@@ -144,4 +148,7 @@ type Delta struct {
 	Role      string     `json:"role,omitempty"`
 	Content   string     `json:"content,omitempty"`
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+	// ReasoningContent is used by providers like DeepSeek to stream
+	// chain-of-thought reasoning. Must be passed back in follow-up messages.
+	ReasoningContent string `json:"reasoning_content,omitempty"`
 }

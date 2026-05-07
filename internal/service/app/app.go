@@ -315,8 +315,14 @@ func resolvePerProviderWebSearch(ctx context.Context, cfg config.Config, pm *pro
 				slog.Info("已启用响应端网页搜索", "provider", key, "protocol", protocol)
 			}
 		default:
-			pm.SetResolvedWebSearch(key, "disabled")
-			slog.Info("跳过网页搜索：不支持的协议", "provider", key, "protocol", protocol)
+			// openai-chat 和 google-genai 无原生 web_search，有 API key 时启用注入模式
+			if cfg.TavilyAPIKey != "" {
+				pm.SetResolvedWebSearch(key, "injected")
+				slog.Info("注入式网页搜索已启用", "provider", key, "protocol", protocol)
+			} else {
+				pm.SetResolvedWebSearch(key, "disabled")
+				slog.Info("跳过网页搜索：无 Tavily API key", "provider", key, "protocol", protocol)
+			}
 		}
 	}
 	// 2. Resolve model-level overrides for provider catalog slugs and route aliases.

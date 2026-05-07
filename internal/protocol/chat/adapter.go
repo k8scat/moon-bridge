@@ -366,7 +366,7 @@ func (a *ChatProviderAdapter) toChatSystemContent(blocks []format.CoreContentBlo
 	var text string
 	for _, b := range blocks {
 		switch b.Type {
-		case "text":
+		case "text", "input_text", "output_text":
 			text += b.Text
 		case "reasoning":
 			continue // skip reasoning content in system
@@ -390,7 +390,7 @@ func (a *ChatProviderAdapter) toChatMessage(msg format.CoreMessage) ChatMessage 
 	var toolUseBlocks []format.CoreContentBlock
 	for _, b := range msg.Content {
 		switch b.Type {
-		case "text", "image":
+		case "text", "image", "input_text", "output_text":
 			textBlocks = append(textBlocks, b)
 		case "tool_use":
 			toolUseBlocks = append(toolUseBlocks, b)
@@ -408,19 +408,31 @@ func (a *ChatProviderAdapter) toChatMessage(msg format.CoreMessage) ChatMessage 
 	// Set content (string for text-only, ContentPart array for multimodal).
 	if len(textBlocks) > 0 {
 		content := a.toChatContent(textBlocks)
-		chatMsg.Content = content
+		// For assistant messages with tool calls, set content to nil if
+		// the content text is empty (OpenAI Chat API requires content=null
+		// when tool_calls are present, not empty string).
+		if len(toolUseBlocks) > 0 {
+			if str, ok := content.(string); ok && str == "" {
+				chatMsg.Content = nil
+			} else {
+				chatMsg.Content = content
+			}
+		} else {
+			chatMsg.Content = content
+		}
 	}
 
 	// Set tool calls for assistant messages.
 	if len(toolUseBlocks) > 0 {
 		chatMsg.ToolCalls = make([]ToolCall, 0, len(toolUseBlocks))
 		for _, b := range toolUseBlocks {
+		argsStr, _ := json.Marshal(string(b.ToolInput))
 			chatMsg.ToolCalls = append(chatMsg.ToolCalls, ToolCall{
 				ID:   b.ToolUseID,
 				Type: "function",
 				Function: ToolCallFunc{
 					Name:      b.ToolName,
-					Arguments: b.ToolInput,
+					Arguments: json.RawMessage(argsStr),
 				},
 			})
 		}
@@ -479,7 +491,7 @@ func (a *ChatProviderAdapter) toChatContent(blocks []format.CoreContentBlock) an
 	parts := make([]ContentPart, 0, len(blocks))
 	for _, b := range blocks {
 		switch b.Type {
-		case "text":
+		case "text", "input_text", "output_text":
 			parts = append(parts, ContentPart{Type: "text", Text: b.Text})
 		case "image":
 			parts = append(parts, ContentPart{

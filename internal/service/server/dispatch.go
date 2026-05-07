@@ -190,6 +190,19 @@ func (server *Server) writeTrace(record mbtrace.Record) {
 		return
 	}
 	requestNumber := server.tracer.NextRequestNumber()
+
+	// Chat 分类：openai-chat 协议的请求/响应
+	if shouldWriteChatTrace(record) {
+		server.writeTraceCategory("Chat", requestNumber, mbtrace.Record{
+			HTTPRequest:        record.HTTPRequest,
+			Model:              record.Model,
+			ChatRequest:        record.ChatRequest,
+			ChatResponse:       record.ChatResponse,
+			ChatStreamEvents:   record.ChatStreamEvents,
+			Error:              record.Error,
+		})
+	}
+
 	if shouldWriteResponseTrace(record) {
 		server.writeTraceCategory("Response", requestNumber, mbtrace.Record{
 			HTTPRequest:        record.HTTPRequest,
@@ -197,6 +210,8 @@ func (server *Server) writeTrace(record mbtrace.Record) {
 			Model:              record.Model,
 			OpenAIResponse:     record.OpenAIResponse,
 			OpenAIStreamEvents: record.OpenAIStreamEvents,
+			UpstreamRequest:    record.UpstreamRequest,
+			UpstreamResponse:   record.UpstreamResponse,
 			Error:              record.Error,
 		})
 	}
@@ -217,11 +232,15 @@ func (server *Server) writeTraceCategory(category string, requestNumber uint64, 
 	}
 }
 func shouldWriteResponseTrace(record mbtrace.Record) bool {
-	return record.OpenAIRequest != nil || record.OpenAIResponse != nil || record.OpenAIStreamEvents != nil
+	return record.OpenAIRequest != nil || record.OpenAIResponse != nil || record.OpenAIStreamEvents != nil || record.UpstreamRequest != nil
 }
 func shouldWriteAnthropicTrace(record mbtrace.Record) bool {
 	return record.AnthropicRequest != nil || record.AnthropicResponse != nil || record.AnthropicStreamEvents != nil
 }
+func shouldWriteChatTrace(record mbtrace.Record) bool {
+	return record.ChatRequest != nil || record.ChatResponse != nil || record.ChatStreamEvents != nil
+}
+
 func traceError(stage string, err error) map[string]string {
 	return map[string]string{"stage": stage, "message": err.Error()}
 }

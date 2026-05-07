@@ -300,7 +300,15 @@ func (s *Server) handleWithAdapters(
 			return
 		}
 
-		chatResp, err := chatClient.CreateChat(ctx, chatReq)
+		record.ChatRequest = chatReq
+		var chatResp *chat.ChatResponse
+		if s.providerMgr != nil && s.providerMgr.ResolvedWebSearch(preferred.ProviderKey) == "injected" && hasWebSearchTool(openAIReq) {
+			cfg := s.currentConfig()
+			injectChatSearchTools(chatReq, cfg.FirecrawlAPIKey)
+			chatResp, err = s.executeChatSearchLoop(ctx, chatClient, chatReq, cfg.TavilyAPIKey, cfg.FirecrawlAPIKey, s.maxSearchRounds())
+		} else {
+			chatResp, err = chatClient.CreateChat(ctx, chatReq)
+		}
 		if err != nil {
 			log.Error("adapter path: Chat API call failed", "error", err)
 			payload := openai.ErrorResponse{
@@ -315,6 +323,7 @@ func (s *Server) handleWithAdapters(
 			writeOpenAIError(w, http.StatusBadGateway, payload)
 			return
 		}
+		record.ChatResponse = chatResp
 
 		coreResp, err = providerAdapter.ToCoreResponse(ctx, chatResp)
 		if err != nil {
@@ -371,7 +380,15 @@ func (s *Server) handleWithAdapters(
 			return
 		}
 
-		googleResp, err := googleClient.GenerateContent(ctx, preferred.UpstreamModel, googleReq)
+		record.UpstreamRequest = googleReq
+		var googleResp *google.GenerateContentResponse
+		if s.providerMgr != nil && s.providerMgr.ResolvedWebSearch(preferred.ProviderKey) == "injected" && hasWebSearchTool(openAIReq) {
+			cfg := s.currentConfig()
+			injectGoogleSearchTools(googleReq, cfg.FirecrawlAPIKey)
+			googleResp, err = s.executeGoogleSearchLoop(ctx, googleClient, preferred.UpstreamModel, googleReq, cfg.TavilyAPIKey, cfg.FirecrawlAPIKey, s.maxSearchRounds())
+		} else {
+			googleResp, err = googleClient.GenerateContent(ctx, preferred.UpstreamModel, googleReq)
+		}
 		if err != nil {
 			log.Error("adapter path: Google API call failed", "error", err)
 			payload := openai.ErrorResponse{
@@ -386,6 +403,7 @@ func (s *Server) handleWithAdapters(
 			writeOpenAIError(w, http.StatusBadGateway, payload)
 			return
 		}
+		record.UpstreamResponse = googleResp
 
 		coreResp, err = providerAdapter.ToCoreResponse(ctx, googleResp)
 		if err != nil {
@@ -587,6 +605,7 @@ func (s *Server) handleAdapterStream(
 			return
 		}
 		streamRecord.AnthropicRequest = anthReq
+		streamRecord.UpstreamRequest = anthReq
 
 		effectiveProvider := s.resolveProvider(openAIReq.Model, &provider.ResolvedRoute{
 			Candidates: []provider.ProviderCandidate{candidate},
@@ -687,7 +706,16 @@ func (s *Server) handleAdapterStream(
 			return
 		}
 
-		chatStream, err := chatClient.StreamChat(ctx, chatReq)
+		streamRecord.ChatRequest = chatReq
+		var chatStream <-chan chat.ChatStreamChunk
+		var err error
+		if s.providerMgr != nil && s.providerMgr.ResolvedWebSearch(candidate.ProviderKey) == "injected" && hasWebSearchTool(openAIReq) {
+			cfg := s.currentConfig()
+			injectChatSearchTools(chatReq, cfg.FirecrawlAPIKey)
+			chatStream, err = s.chatSearchBufferedStream(ctx, chatClient, chatReq, cfg.TavilyAPIKey, cfg.FirecrawlAPIKey, s.maxSearchRounds())
+		} else {
+			chatStream, err = chatClient.StreamChat(ctx, chatReq)
+		}
 		if err != nil {
 			log.Error("adapter stream: StreamChat failed", "error", err)
 			payload := openai.ErrorResponse{
@@ -767,6 +795,7 @@ func (s *Server) handleAdapterStream(
 			return
 		}
 
+		streamRecord.UpstreamRequest = googleReq
 		googleStream, err := googleClient.StreamGenerateContent(ctx, candidate.UpstreamModel, googleReq)
 		if err != nil {
 			log.Error("adapter stream: StreamGenerateContent failed", "error", err)
@@ -952,11 +981,19 @@ func (s *Server) handleAdapterStream(
 									outputText = finalResp.OutputText
 								}
 								s.pluginRegistry.OnStreamComplete(openAIReq.Model, states, outputText, sess.ExtensionData)
-							}
-						}
-					}
 				}
 			}
+		}
+	}
+		// Chat stream events from provider adapter
+		if chatProvider, ok := s.adapterRegistry.GetProvider(config.ProtocolOpenAIChat); ok {
+			if chatAdapter, ok := chatProvider.(*chat.ChatProviderAdapter); ok {
+				if events := chatAdapter.StreamBuffer(); len(events) > 0 {
+					streamRecord.ChatStreamEvents = events
+				}
+			}
+		}
+	}
 		}
 	}
 	if s.stats != nil && (finalUsage.InputTokens > 0 || finalUsage.OutputTokens > 0) {
