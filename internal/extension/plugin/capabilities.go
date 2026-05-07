@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"moonbridge/internal/protocol/anthropic"
 	"time"
 
 	"moonbridge/internal/foundation/logger"
-	"moonbridge/internal/protocol/anthropic"
 	"moonbridge/internal/protocol/format"
 	"moonbridge/internal/protocol/openai"
 
@@ -21,20 +21,20 @@ type InputPreprocessor interface {
 	PreprocessInput(ctx *RequestContext, raw json.RawMessage) json.RawMessage
 }
 
-// RequestMutator modifies the Anthropic request after conversion.
+// RequestMutator modifies the Core request after conversion.
 type RequestMutator interface {
-	MutateRequest(ctx *RequestContext, req *anthropic.MessageRequest)
+	MutateRequest(ctx *RequestContext, req *format.CoreRequest)
 }
 
 // ToolInjector injects additional tool definitions into the request.
 // Called during tool conversion; returned tools are appended.
 type ToolInjector interface {
-	InjectTools(ctx *RequestContext) []anthropic.Tool
+	InjectTools(ctx *RequestContext) []format.CoreTool
 }
 
 // MessageRewriter rewrites the message list during input conversion.
 type MessageRewriter interface {
-	RewriteMessages(ctx *RequestContext, messages []anthropic.Message) []anthropic.Message
+	RewriteMessages(ctx *RequestContext, messages []format.CoreMessage) []format.CoreMessage
 }
 
 // --- Provider pipeline capabilities ---
@@ -55,10 +55,9 @@ type ProviderWrapper interface {
 
 // ContentFilter filters or transforms response content blocks.
 type ContentFilter interface {
-	// FilterContent inspects a content block. Returns:
-	//   skip: true to exclude the block from output
-	//   extraOutput: additional output items to emit (e.g. reasoning items)
-	FilterContent(ctx *RequestContext, block anthropic.ContentBlock) (skip bool, extraOutput []openai.OutputItem)
+	// FilterContent inspects a content block. Returns skip=true to exclude
+	// the block from the response output.
+	FilterContent(ctx *RequestContext, block format.CoreContentBlock) bool
 }
 
 // ResponsePostProcessor modifies the final OpenAI response.
@@ -68,7 +67,7 @@ type ResponsePostProcessor interface {
 
 // ContentRememberer is called with the full response content for caching.
 type ContentRememberer interface {
-	RememberContent(ctx *RequestContext, content []anthropic.ContentBlock)
+	RememberContent(ctx *RequestContext, content []format.CoreContentBlock)
 }
 
 // --- Streaming pipeline capabilities ---
@@ -113,14 +112,14 @@ type SessionStateProvider interface {
 // history. The bridge only passes OpenAI reasoning summaries and session state;
 // plugins decide how to decode, cache, or fall back for their provider.
 type ThinkingPrepender interface {
-	PrependThinkingForToolUse(messages []anthropic.Message, toolCallID string, pendingSummary []openai.ReasoningItemSummary, sessionState any) []anthropic.Message
-	PrependThinkingForAssistant(blocks []anthropic.ContentBlock, pendingSummary []openai.ReasoningItemSummary, sessionState any) []anthropic.ContentBlock
+	PrependThinkingForToolUse(messages []format.CoreMessage, toolCallID string, pendingSummary []openai.ReasoningItemSummary, sessionState any) []format.CoreMessage
+	PrependThinkingForAssistant(blocks []format.CoreContentBlock, pendingSummary []openai.ReasoningItemSummary, sessionState any) []format.CoreContentBlock
 }
 
 // ReasoningExtractor reconstructs provider-specific thinking blocks from
 // OpenAI Responses reasoning summaries.
 type ReasoningExtractor interface {
-	ExtractThinkingBlock(ctx *RequestContext, summary []openai.ReasoningItemSummary) (anthropic.ContentBlock, bool)
+	ExtractThinkingBlock(ctx *RequestContext, summary []openai.ReasoningItemSummary) (format.CoreContentBlock, bool)
 }
 
 // --- Request completion hook ---

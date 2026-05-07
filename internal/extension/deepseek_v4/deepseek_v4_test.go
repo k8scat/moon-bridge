@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"moonbridge/internal/protocol/format"
 	pluginpkg "moonbridge/internal/extension/plugin"
 	"moonbridge/internal/protocol/openai"
 	"moonbridge/internal/protocol/anthropic"
@@ -127,13 +128,13 @@ func TestPrependThinkingWarnsWhenUsingRequiredFallback(t *testing.T) {
 		t.Fatalf("Init() error = %v", err)
 	}
 
-	messages := []anthropic.Message{{
+	messages := []format.CoreMessage{{
 		Role:    "assistant",
-		Content: []anthropic.ContentBlock{{Type: "tool_use", ID: "call_missing"}},
+		Content: []format.CoreContentBlock{{Type: "tool_use", ToolUseID: "call_missing"}},
 	}}
 	got := p.PrependThinkingForToolUse(messages, "call_missing", nil, NewState())
 
-	if got[0].Content[0].Type != "thinking" || got[0].Content[0].Thinking != "" {
+	if got[0].Content[0].Type != "reasoning" || got[0].Content[0].ReasoningText != "" {
 		t.Fatalf("fallback thinking block = %+v", got[0].Content)
 	}
 	logText := logs.String()
@@ -146,12 +147,12 @@ func TestPrependThinkingWarnsWhenUsingRequiredFallback(t *testing.T) {
 		Type: "summary_text",
 		Text: EncodeThinkingSummary(anthropic.ContentBlock{Type: "thinking", Signature: "sig_summary"}),
 	}}
-	got = p.PrependThinkingForToolUse([]anthropic.Message{{
+	got = p.PrependThinkingForToolUse([]format.CoreMessage{{
 		Role:    "assistant",
-		Content: []anthropic.ContentBlock{{Type: "tool_use", ID: "call_summary"}},
+		Content: []format.CoreContentBlock{{Type: "tool_use", ToolUseID: "call_summary"}},
 	}}, "call_summary", summary, NewState())
 
-	if got[0].Content[0].Type != "thinking" || got[0].Content[0].Signature != "sig_summary" {
+	if got[0].Content[0].Type != "reasoning" || got[0].Content[0].ReasoningSignature != "sig_summary" {
 		t.Fatalf("summary thinking block = %+v", got[0].Content)
 	}
 	if logs.Len() != 0 {
@@ -161,12 +162,12 @@ func TestPrependThinkingWarnsWhenUsingRequiredFallback(t *testing.T) {
 	logs.Reset()
 	state := NewState()
 	state.RememberForToolCalls([]string{"call_cached"}, anthropic.ContentBlock{Type: "thinking", Signature: "sig_cached"})
-	got = p.PrependThinkingForToolUse([]anthropic.Message{{
+	got = p.PrependThinkingForToolUse([]format.CoreMessage{{
 		Role:    "assistant",
-		Content: []anthropic.ContentBlock{{Type: "tool_use", ID: "call_cached"}},
+		Content: []format.CoreContentBlock{{Type: "tool_use", ToolUseID: "call_cached"}},
 	}}, "call_cached", nil, state)
 
-	if got[0].Content[0].Type != "thinking" || got[0].Content[0].Signature != "sig_cached" {
+	if got[0].Content[0].Type != "reasoning" || got[0].Content[0].ReasoningSignature != "sig_cached" {
 		t.Fatalf("cached thinking block = %+v", got[0].Content)
 	}
 	if logs.Len() != 0 {

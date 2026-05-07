@@ -3,10 +3,11 @@ package plugin_test
 import (
 	"encoding/json"
 	"testing"
+	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/protocol/anthropic"
 
 	"moonbridge/internal/extension/plugin"
 	"moonbridge/internal/protocol/openai"
-	"moonbridge/internal/protocol/anthropic"
 )
 
 // --- Test helpers ---
@@ -37,7 +38,7 @@ type testMutator struct {
 	called bool
 }
 
-func (p *testMutator) MutateRequest(_ *plugin.RequestContext, req *anthropic.MessageRequest) {
+func (p *testMutator) MutateRequest(_ *plugin.RequestContext, req *format.CoreRequest) {
 	p.called = true
 	v := 0.5
 	req.Temperature = &v
@@ -47,19 +48,19 @@ type testToolInjector struct {
 	testPlugin
 }
 
-func (p *testToolInjector) InjectTools(_ *plugin.RequestContext) []anthropic.Tool {
-	return []anthropic.Tool{{Name: "injected_tool"}}
+func (p *testToolInjector) InjectTools(_ *plugin.RequestContext) []format.CoreTool {
+	return []format.CoreTool{{Name: "injected_tool"}}
 }
 
 type testContentFilter struct {
 	testPlugin
 }
 
-func (p *testContentFilter) FilterContent(_ *plugin.RequestContext, block anthropic.ContentBlock) (bool, []openai.OutputItem) {
-	if block.Type == "thinking" {
-		return true, []openai.OutputItem{{Type: "reasoning", Summary: []openai.ReasoningItemSummary{{Type: "summary_text", Text: "thought"}}}}
+func (p *testContentFilter) FilterContent(_ *plugin.RequestContext, block format.CoreContentBlock) bool {
+	if block.Type == "reasoning" {
+		return true
 	}
-	return false, nil
+	return false
 }
 
 type testErrorTransformer struct {
@@ -140,7 +141,7 @@ func TestRegistryMutateRequest(t *testing.T) {
 	m := &testMutator{testPlugin: testPlugin{name: "mut", enabled: true}}
 	r.Register(m)
 
-	req := &anthropic.MessageRequest{Temperature: ptrFloat(1.0)}
+	req := &format.CoreRequest{Temperature: ptrFloat(1.0)}
 	ctx := &plugin.RequestContext{ModelAlias: "test"}
 	r.MutateRequest(ctx, req)
 	if !m.called {
@@ -167,20 +168,14 @@ func TestRegistryFilterContent(t *testing.T) {
 	r.Register(&testContentFilter{testPlugin: testPlugin{name: "cf", enabled: true}})
 
 	ctx := &plugin.RequestContext{ModelAlias: "test"}
-	skip, extra := r.FilterContent(ctx, anthropic.ContentBlock{Type: "thinking", Thinking: "deep thought"})
+	skip := r.FilterContent(ctx, format.CoreContentBlock{Type: "reasoning"})
 	if !skip {
-		t.Fatal("should skip thinking block")
-	}
-	if len(extra) != 1 || extra[0].Type != "reasoning" {
-		t.Fatalf("unexpected extra: %+v", extra)
+		t.Fatal("should skip reasoning block")
 	}
 
-	skip2, extra2 := r.FilterContent(ctx, anthropic.ContentBlock{Type: "text", Text: "hello"})
+	skip2 := r.FilterContent(ctx, format.CoreContentBlock{Type: "text", Text: "hello"})
 	if skip2 {
 		t.Fatal("should not skip text block")
-	}
-	if len(extra2) != 0 {
-		t.Fatalf("unexpected extra for text: %+v", extra2)
 	}
 }
 
@@ -241,9 +236,9 @@ func TestRegistryNilSafe(t *testing.T) {
 	var r *plugin.Registry
 	// All methods should be nil-safe.
 	r.PreprocessInput("m", nil)
-	r.MutateRequest(&plugin.RequestContext{}, &anthropic.MessageRequest{})
+	r.MutateRequest(&plugin.RequestContext{}, &format.CoreRequest{})
 	r.InjectTools(&plugin.RequestContext{})
-	r.FilterContent(&plugin.RequestContext{}, anthropic.ContentBlock{})
+	r.FilterContent(&plugin.RequestContext{}, format.CoreContentBlock{})
 	r.TransformError("m", "msg")
 	r.NewSessionData()
 	r.NewStreamStates("m")

@@ -92,17 +92,23 @@ func (p *DSPlugin) PreprocessInput(_ *plugin.RequestContext, raw json.RawMessage
 
 // --- RequestMutator ---
 
-func (p *DSPlugin) MutateRequest(ctx *plugin.RequestContext, req *anthropic.MessageRequest) {
+func (p *DSPlugin) MutateRequest(ctx *plugin.RequestContext, req *format.CoreRequest) {
 	var reasoning map[string]any
 	if ctx != nil {
 		reasoning = ctx.Reasoning
 	}
-	ToAnthropicRequest(req, reasoning)
+	// Map reasoning effort to CoreRequest.Output.Effort
+	if effort, ok := reasoningEffort(reasoning); ok {
+		req.Output = &format.CoreOutputConfig{Effort: effort}
+	}
+	// Clear incompatible sampling params for DeepSeek V4
+	req.Temperature = nil
+	req.TopP = nil
 }
 
 // --- MessageRewriter ---
 
-func (p *DSPlugin) RewriteMessages(ctx *plugin.RequestContext, messages []anthropic.Message) []anthropic.Message {
+func (p *DSPlugin) RewriteMessages(ctx *plugin.RequestContext, messages []format.CoreMessage) []format.CoreMessage {
 	if p.cfg == nil || p.cfg.ReinforceInstructions == nil || !*p.cfg.ReinforceInstructions {
 		return messages
 	}
@@ -113,24 +119,24 @@ func (p *DSPlugin) RewriteMessages(ctx *plugin.RequestContext, messages []anthro
 	// Inject a reinforcement message before the last real user message.
 	// Skip tool_result messages (they have Role="user" but are tool responses).
 	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == "user" && !isToolResultMessage(messages[i]) {
-			reinforcement := anthropic.Message{
+		if messages[i].Role == "user" && !isToolResultMessageFormat(messages[i]) {
+			reinforcement := format.CoreMessage{
 				Role: "user",
-				Content: []anthropic.ContentBlock{{
+				Content: []format.CoreContentBlock{{
 					Type: "text",
 					Text: prompt,
 				}},
 			}
 			// Insert before position i.
-			messages = append(messages[:i], append([]anthropic.Message{reinforcement}, messages[i:]...)...)
+			messages = append(messages[:i], append([]format.CoreMessage{reinforcement}, messages[i:]...)...)
 			break
 		}
 	}
 	return messages
 }
 
-// isToolResultMessage checks if a user message contains only tool_result blocks.
-func isToolResultMessage(msg anthropic.Message) bool {
+// isToolResultMessageFormat checks if a user message contains only tool_result blocks.
+func isToolResultMessageFormat(msg format.CoreMessage) bool {
 	if len(msg.Content) == 0 {
 		return false
 	}
@@ -144,35 +150,39 @@ func isToolResultMessage(msg anthropic.Message) bool {
 
 // --- ThinkingPrepender ---
 
-func (p *DSPlugin) PrependThinkingForToolUse(messages []anthropic.Message, toolCallID string, pendingSummary []openai.ReasoningItemSummary, sessionState any) []anthropic.Message {
+func (p *DSPlugin) PrependThinkingForToolUse(messages []format.CoreMessage, toolCallID string, pendingSummary []openai.ReasoningItemSummary, sessionState any) []format.CoreMessage {
+	// Convert to anthropic format for state operations, then back
+	anthroMsgs := coreMessagesToAnthropic(messages)
 	if block, ok := p.thinkingBlockFromSummary(pendingSummary); ok {
-		PrependThinkingBlockForToolUse(&messages, block)
-		return messages
+		PrependThinkingBlockForToolUse(&anthroMsgs, block)
+		return anthropicToCoreMessages(anthroMsgs)
 	}
 	state, _ := sessionState.(*State)
 	if state != nil {
-		state.PrependCachedForToolUse(&messages, toolCallID)
+		state.PrependCachedForToolUse(&anthroMsgs, toolCallID)
 	}
-	if PrependRequiredThinkingForToolUse(&messages) {
+	if PrependRequiredThinkingForToolUse(&anthroMsgs) {
 		p.warnRequiredThinkingFallback("tool_use", "tool_call_id", toolCallID)
 	}
-	return messages
+	return anthropicToCoreMessages(anthroMsgs)
 }
 
-func (p *DSPlugin) PrependThinkingForAssistant(blocks []anthropic.ContentBlock, pendingSummary []openai.ReasoningItemSummary, sessionState any) []anthropic.ContentBlock {
+func (p *DSPlugin) PrependThinkingForAssistant(blocks []format.CoreContentBlock, pendingSummary []openai.ReasoningItemSummary, sessionState any) []format.CoreContentBlock {
+	// Convert to anthropic format for state operations, then back
+	anthroBlocks := coreBlocksToAnthropic(blocks)
 	if block, ok := p.thinkingBlockFromSummary(pendingSummary); ok {
-		blocks, _ = PrependThinkingBlockForAssistantText(blocks, block)
-		return blocks
+		anthroBlocks, _ = PrependThinkingBlockForAssistantText(anthroBlocks, block)
+		return anthropicBlocksToCore(anthroBlocks)
 	}
 	state, _ := sessionState.(*State)
 	if state != nil {
-		blocks = state.PrependCachedForAssistantText(blocks)
+		anthroBlocks = state.PrependCachedForAssistantText(anthroBlocks)
 	}
-	blocks, inserted := PrependRequiredThinkingForAssistantText(blocks)
+	anthroBlocks, inserted := PrependRequiredThinkingForAssistantText(anthroBlocks)
 	if inserted {
-		p.warnRequiredThinkingFallback("assistant_text", "content_blocks", len(blocks)-1)
+		p.warnRequiredThinkingFallback("assistant_text", "content_blocks", len(anthroBlocks)-1)
 	}
-	return blocks
+	return anthropicBlocksToCore(anthroBlocks)
 }
 
 func (p *DSPlugin) warnRequiredThinkingFallback(target string, attrs ...any) {
@@ -188,37 +198,24 @@ func (p *DSPlugin) thinkingBlockFromSummary(summary []openai.ReasoningItemSummar
 	if len(summary) == 0 {
 		return anthropic.ContentBlock{}, false
 	}
-	return p.ExtractThinkingBlock(&plugin.RequestContext{}, summary)
+	coreBlock, ok := p.ExtractThinkingBlock(&plugin.RequestContext{}, summary)
+	if !ok {
+		return anthropic.ContentBlock{}, false
+	}
+	return coreBlockToAnthropic(coreBlock), true
 }
 
 // --- ContentFilter ---
 
-func (p *DSPlugin) FilterContent(_ *plugin.RequestContext, block anthropic.ContentBlock) (skip bool, extra []openai.OutputItem) {
+func (p *DSPlugin) FilterContent(_ *plugin.RequestContext, block format.CoreContentBlock) bool {
 	switch block.Type {
-	case "thinking", "reasoning_content":
-		text := EncodeThinkingSummary(block)
-		if text == "" {
-			text = ExtractReasoningContent([]anthropic.ContentBlock{block})
-		}
-		if text != "" {
-			extra = append(extra, openai.OutputItem{
-				Type: "reasoning",
-				Summary: []openai.ReasoningItemSummary{{
-					Type: "summary_text",
-					Text: text,
-				}},
-			})
-		}
-		return true, extra
+	case "reasoning":
+		return true
 	case "text":
-		if IsReasoningContentBlock(&block) {
-			return true, nil
-		}
+		return false
 	}
-	return false, nil
+	return false
 }
-
-// --- Core ContentTransformer ---
 
 // FilterCoreContent is the Core format equivalent of FilterContent.
 // It filters reasoning content blocks from Core responses.
@@ -237,12 +234,35 @@ func (p *DSPlugin) FilterCoreContent(ctx context.Context, block *format.CoreCont
 
 // --- ContentRememberer ---
 
-func (p *DSPlugin) RememberContent(ctx *plugin.RequestContext, content []anthropic.ContentBlock) {
+func (p *DSPlugin) RememberContent(ctx *plugin.RequestContext, content []format.CoreContentBlock) {
 	state, _ := ctx.SessionState(PluginName).(*State)
 	if state == nil {
 		return
 	}
-	state.RememberFromContent(content)
+	// Convert Core content blocks to anthropic ContentBlocks for internal state recording.
+	anthropicBlocks := make([]anthropic.ContentBlock, 0, len(content))
+	for _, block := range content {
+		switch block.Type {
+		case "reasoning":
+			anthropicBlocks = append(anthropicBlocks, anthropic.ContentBlock{
+				Type:      "thinking",
+				Thinking:  block.ReasoningText,
+				Signature: block.ReasoningSignature,
+			})
+		case "tool_use":
+			anthropicBlocks = append(anthropicBlocks, anthropic.ContentBlock{
+				Type: "tool_use",
+				ID:   block.ToolUseID,
+				Name: block.ToolName,
+			})
+		case "text":
+			anthropicBlocks = append(anthropicBlocks, anthropic.ContentBlock{
+				Type: "text",
+				Text: block.Text,
+			})
+		}
+	}
+	state.RememberFromContent(anthropicBlocks)
 }
 
 // RememberCoreContent is the Core format equivalent of RememberContent.
@@ -371,27 +391,26 @@ func (p *DSPlugin) MutateCoreRequest(ctx context.Context, req *format.CoreReques
 
 // --- ReasoningExtractor ---
 
-func (p *DSPlugin) ExtractThinkingBlock(_ *plugin.RequestContext, summary []openai.ReasoningItemSummary) (anthropic.ContentBlock, bool) {
+func (p *DSPlugin) ExtractThinkingBlock(_ *plugin.RequestContext, summary []openai.ReasoningItemSummary) (format.CoreContentBlock, bool) {
 	for _, item := range summary {
 		if item.Type != "summary_text" {
 			// Try adapter-created "text" type items with optional Signature field.
 			if item.Type == "text" {
-				block := anthropic.ContentBlock{
-					Type:      "thinking",
-					Thinking:  item.Text,
-					Signature: item.Signature,
-				}
-				if block.Thinking != "" || block.Signature != "" {
-					return block, true
+				if item.Text != "" || item.Signature != "" {
+					return format.CoreContentBlock{
+						Type:               "reasoning",
+						ReasoningText:      item.Text,
+						ReasoningSignature: item.Signature,
+					}, true
 				}
 			}
 			continue
 		}
 		if block, ok := DecodeThinkingSummary(item.Text); ok {
-			return block, true
+			return anthropicBlockToCore(block), true
 		}
 	}
-	return anthropic.ContentBlock{}, false
+	return format.CoreContentBlock{}, false
 }
 
 // --- SessionStateProvider ---
@@ -414,3 +433,133 @@ var (
 	_ plugin.ThinkingPrepender    = (*DSPlugin)(nil)
 	_ plugin.ReasoningExtractor   = (*DSPlugin)(nil)
 )
+
+// =========================================================================
+// Conversion helpers: format.Core types ↔ anthropic types
+// These bridge format-typed plugin interfaces with internal state that
+// operates on anthropic types. DELETE after state migration to format types.
+// =========================================================================
+
+// coreMessagesToAnthropic converts []format.CoreMessage to []anthropic.Message.
+func coreMessagesToAnthropic(msgs []format.CoreMessage) []anthropic.Message {
+	result := make([]anthropic.Message, 0, len(msgs))
+	for _, m := range msgs {
+		result = append(result, anthropic.Message{
+			Role:    m.Role,
+			Content: coreBlocksToAnthropic(m.Content),
+		})
+	}
+	return result
+}
+
+// anthropicToCoreMessages converts []anthropic.Message to []format.CoreMessage.
+func anthropicToCoreMessages(msgs []anthropic.Message) []format.CoreMessage {
+	result := make([]format.CoreMessage, 0, len(msgs))
+	for _, m := range msgs {
+		result = append(result, format.CoreMessage{
+			Role:    m.Role,
+			Content: anthropicBlocksToCore(m.Content),
+		})
+	}
+	return result
+}
+
+// coreBlocksToAnthropic converts []format.CoreContentBlock to []anthropic.ContentBlock.
+func coreBlocksToAnthropic(blocks []format.CoreContentBlock) []anthropic.ContentBlock {
+	result := make([]anthropic.ContentBlock, 0, len(blocks))
+	for _, b := range blocks {
+		result = append(result, coreBlockToAnthropic(b))
+	}
+	return result
+}
+
+// anthropicBlocksToCore converts []anthropic.ContentBlock to []format.CoreContentBlock.
+func anthropicBlocksToCore(blocks []anthropic.ContentBlock) []format.CoreContentBlock {
+	result := make([]format.CoreContentBlock, 0, len(blocks))
+	for _, b := range blocks {
+		result = append(result, anthropicBlockToCore(b))
+	}
+	return result
+}
+
+// coreBlockToAnthropic converts a single format.CoreContentBlock to anthropic.ContentBlock.
+func coreBlockToAnthropic(b format.CoreContentBlock) anthropic.ContentBlock {
+	switch b.Type {
+	case "reasoning":
+		return anthropic.ContentBlock{
+			Type:      "thinking",
+			Thinking:  b.ReasoningText,
+			Signature: b.ReasoningSignature,
+		}
+	case "text":
+		return anthropic.ContentBlock{Type: "text", Text: b.Text}
+	case "tool_use":
+		return anthropic.ContentBlock{
+			Type:  "tool_use",
+			ID:    b.ToolUseID,
+			Name:  b.ToolName,
+			Input: b.ToolInput,
+		}
+	case "tool_result":
+		return anthropic.ContentBlock{
+			Type:      "tool_result",
+			ToolUseID: b.ToolUseID,
+			Content:   coreBlocksToAnthropic(b.ToolResultContent),
+		}
+	case "image":
+		return anthropic.ContentBlock{
+			Type: "image",
+			Source: &anthropic.ImageSource{
+				Type:      "base64",
+				Data:      b.ImageData,
+				MediaType: b.MediaType,
+			},
+		}
+	default:
+		return anthropic.ContentBlock{Type: "text", Text: b.Text}
+	}
+}
+
+// anthropicBlockToCore converts a single anthropic.ContentBlock to format.CoreContentBlock.
+func anthropicBlockToCore(b anthropic.ContentBlock) format.CoreContentBlock {
+	switch b.Type {
+	case "thinking":
+		return format.CoreContentBlock{
+			Type:               "reasoning",
+			ReasoningText:      b.Thinking,
+			ReasoningSignature: b.Signature,
+		}
+	case "text":
+		return format.CoreContentBlock{Type: "text", Text: b.Text}
+	case "tool_use":
+		return format.CoreContentBlock{
+			Type:      "tool_use",
+			ToolUseID: b.ID,
+			ToolName:  b.Name,
+			ToolInput: b.Input,
+		}
+	case "tool_result":
+		cb := format.CoreContentBlock{
+			Type:      "tool_result",
+			ToolUseID: b.ToolUseID,
+		}
+		if b.Content != nil {
+			switch c := b.Content.(type) {
+			case string:
+				cb.ToolResultContent = []format.CoreContentBlock{{Type: "text", Text: c}}
+			case []anthropic.ContentBlock:
+				cb.ToolResultContent = anthropicBlocksToCore(c)
+			}
+		}
+		return cb
+	case "image":
+		cb := format.CoreContentBlock{Type: "image"}
+		if b.Source != nil {
+			cb.MediaType = b.Source.MediaType
+			cb.ImageData = b.Source.Data
+		}
+		return cb
+	default:
+		return format.CoreContentBlock{Type: "text", Text: b.Text}
+	}
+}

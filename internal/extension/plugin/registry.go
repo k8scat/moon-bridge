@@ -10,7 +10,6 @@ import (
 
 	"moonbridge/internal/foundation/config"
 	"moonbridge/internal/foundation/logger"
-	"moonbridge/internal/protocol/anthropic"
 	"moonbridge/internal/protocol/format"
 	"moonbridge/internal/protocol/openai"
 )
@@ -175,7 +174,7 @@ func (r *Registry) PreprocessInput(model string, raw json.RawMessage) json.RawMe
 }
 
 // MutateRequest chains RequestMutator across enabled plugins.
-func (r *Registry) MutateRequest(ctx *RequestContext, req *anthropic.MessageRequest) {
+func (r *Registry) MutateRequest(ctx *RequestContext, req *format.CoreRequest) {
 	if r == nil {
 		return
 	}
@@ -187,11 +186,11 @@ func (r *Registry) MutateRequest(ctx *RequestContext, req *anthropic.MessageRequ
 }
 
 // InjectTools collects tools from all enabled ToolInjectors.
-func (r *Registry) InjectTools(ctx *RequestContext) []anthropic.Tool {
+func (r *Registry) InjectTools(ctx *RequestContext) []format.CoreTool {
 	if r == nil {
 		return nil
 	}
-	var tools []anthropic.Tool
+	var tools []format.CoreTool
 	for _, p := range r.toolInjectors {
 		if p.(Plugin).EnabledForModel(ctx.ModelAlias) {
 			tools = append(tools, p.InjectTools(ctx)...)
@@ -201,7 +200,7 @@ func (r *Registry) InjectTools(ctx *RequestContext) []anthropic.Tool {
 }
 
 // RewriteMessages chains MessageRewriter across enabled plugins.
-func (r *Registry) RewriteMessages(ctx *RequestContext, messages []anthropic.Message) []anthropic.Message {
+func (r *Registry) RewriteMessages(ctx *RequestContext, messages []format.CoreMessage) []format.CoreMessage {
 	if r == nil {
 		return messages
 	}
@@ -227,21 +226,19 @@ func (r *Registry) WrapProvider(ctx *RequestContext, provider any) any {
 }
 
 // FilterContent calls each enabled ContentFilter. Returns skip=true if any
-// filter says skip, and collects all extra output items.
-func (r *Registry) FilterContent(ctx *RequestContext, block anthropic.ContentBlock) (skip bool, extra []openai.OutputItem) {
+// filter says skip.
+func (r *Registry) FilterContent(ctx *RequestContext, block format.CoreContentBlock) bool {
 	if r == nil {
-		return false, nil
+		return false
 	}
 	for _, p := range r.contentFilters {
 		if p.(Plugin).EnabledForModel(ctx.ModelAlias) {
-			s, e := p.FilterContent(ctx, block)
-			if s {
-				skip = true
+			if p.FilterContent(ctx, block) {
+				return true
 			}
-			extra = append(extra, e...)
 		}
 	}
-	return
+	return false
 }
 
 // PostProcessResponse chains ResponsePostProcessor across enabled plugins.
@@ -257,7 +254,7 @@ func (r *Registry) PostProcessResponse(ctx *RequestContext, resp *openai.Respons
 }
 
 // RememberContent chains ContentRememberer across enabled plugins.
-func (r *Registry) RememberContent(ctx *RequestContext, content []anthropic.ContentBlock) {
+func (r *Registry) RememberContent(ctx *RequestContext, content []format.CoreContentBlock) {
 	if r == nil {
 		return
 	}

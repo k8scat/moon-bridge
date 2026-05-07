@@ -7,7 +7,6 @@ import (
 	"moonbridge/internal/extension/plugin"
 	"moonbridge/internal/foundation/config"
 	"moonbridge/internal/protocol/format"
-	"moonbridge/internal/protocol/anthropic"
 )
 
 const PluginName = "visual"
@@ -52,8 +51,8 @@ func (p *Plugin) EnabledForModel(model string) bool {
 	return p.appCfg.ExtensionEnabled(PluginName, model)
 }
 
-func (p *Plugin) InjectTools(_ *plugin.RequestContext) []anthropic.Tool {
-	return Tools()
+func (p *Plugin) InjectTools(_ *plugin.RequestContext) []format.CoreTool {
+	return CoreTools()
 }
 
 // CoreInjectTools returns Core-format tool definitions for visual analysis.
@@ -133,6 +132,13 @@ func validateModelConfig(appCfg config.Config, modelAlias string) error {
 	_ = def
 	return nil
 }
+
+var (
+	_ plugin.Plugin             = (*Plugin)(nil)
+	_ plugin.ConfigSpecProvider = (*Plugin)(nil)
+	
+)
+
 
 var (
 	_ plugin.Plugin             = (*Plugin)(nil)
