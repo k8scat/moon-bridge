@@ -596,8 +596,9 @@ func (s *Server) handleWithAdapters(
 		}
 		outputTokens := coreResp.Usage.OutputTokens
 		var cacheHitRate float64
-		if inputTotal > 0 {
-			cacheHitRate = float64(cachedInput) / float64(inputTotal) * 100
+		effectiveTotal := freshInput + cachedInput
+		if effectiveTotal > 0 {
+			cacheHitRate = float64(cachedInput) / float64(effectiveTotal) * 100
 		}
 		reqDuration := time.Since(requestStart)
 		billingUsage := stats.BillingUsage{
@@ -1136,15 +1137,16 @@ func (s *Server) handleAdapterStream(
 	}
 	outputTokens := finalUsage.OutputTokens
 	var cacheHitRate float64
-	if inputTotal > 0 {
-		cacheHitRate = float64(cachedInput) / float64(inputTotal) * 100
+	effectiveTotal := freshInput + cachedInput
+	if effectiveTotal > 0 {
+		cacheHitRate = float64(cachedInput) / float64(effectiveTotal) * 100
 	}
 	reqDuration := time.Since(requestStart)
 	billingUsage := stats.BillingUsage{
 		FreshInputTokens:         freshInput,
 		OutputTokens:             outputTokens,
-		CacheCreationInputTokens: finalUsage.InputTokensDetails.CachedTokens,
-		CacheReadInputTokens:     0,
+		CacheCreationInputTokens: 0,
+		CacheReadInputTokens:     cachedInput,
 	}
 	reqCost := computeCostWithProviderPricing(s.providerMgr, s.stats, openAIReq.Model, candidate.UpstreamModel, candidate.ProviderKey, billingUsage)
 	log.Info("流式请求完成",
