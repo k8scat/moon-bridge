@@ -6,7 +6,7 @@ package store
 import (
 	"context"
 
-	"moonbridge/internal/foundation/config"
+	"moonbridge/internal/config"
 )
 
 // ReloadFunc is called by ApplyPendingChanges to apply a new configuration

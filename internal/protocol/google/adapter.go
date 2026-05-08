@@ -10,8 +10,7 @@ import (
 	"fmt"
 	"sync"
 
-	"moonbridge/internal/foundation/config"
-	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/format"
 	"moonbridge/internal/protocol/cache"
 )
 
@@ -25,7 +24,7 @@ import (
 // Clean room: no dependency on protocol-specific packages beyond google/.
 // Only references: config, format, and google types.
 type GeminiProviderAdapter struct {
-	cfg   config.Config
+	cfgMaxTokens int
 	client *Client
 	hooks format.CorePluginHooks
 
@@ -45,9 +44,9 @@ type GeminiProviderAdapter struct {
 //
 // client is the HTTP client for Gemini API calls. May be nil if the adapter
 // is registered for type conversion only (dispatch layer manages the client).
-func NewGeminiProviderAdapter(cfg config.Config, client *Client, hooks format.CorePluginHooks, cacheCfg *cache.PlanCacheConfig, registry *cache.MemoryRegistry) *GeminiProviderAdapter {
+func NewGeminiProviderAdapter(cfgMaxTokens int, client *Client, hooks format.CorePluginHooks, cacheCfg *cache.PlanCacheConfig, registry *cache.MemoryRegistry) *GeminiProviderAdapter {
 	return &GeminiProviderAdapter{
-		cfg:       cfg,
+		cfgMaxTokens: cfgMaxTokens,
 		client:    client,
 		hooks:     hooks.WithDefaults(),
 		cacheCfg:  cacheCfg,
@@ -59,7 +58,7 @@ func NewGeminiProviderAdapter(cfg config.Config, client *Client, hooks format.Co
 
 // ProviderProtocol returns "google-genai".
 func (a *GeminiProviderAdapter) ProviderProtocol() string {
-	return config.ProtocolGoogleGenAI
+	return "google-genai"
 }
 
 // =========================================================================
@@ -450,8 +449,8 @@ func (a *GeminiProviderAdapter) toGenerationConfig(req *format.CoreRequest) *Gen
 
 	if req.MaxTokens > 0 {
 		gc.MaxOutputTokens = req.MaxTokens
-	} else if a.cfg.DefaultMaxTokens > 0 {
-		gc.MaxOutputTokens = a.cfg.DefaultMaxTokens
+	} else if a.cfgMaxTokens > 0 {
+		gc.MaxOutputTokens = a.cfgMaxTokens
 	}
 
 	// Apply GenerationConfig map overrides (D-02).

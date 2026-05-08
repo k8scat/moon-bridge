@@ -3,7 +3,7 @@ package runtime_test
 import (
 	"testing"
 
-	"moonbridge/internal/foundation/config"
+	"moonbridge/internal/config"
 	"moonbridge/internal/service/provider"
 	"moonbridge/internal/service/runtime"
 	"moonbridge/internal/service/stats"

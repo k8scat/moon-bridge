@@ -13,8 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"moonbridge/internal/foundation/config"
-	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/format"
 	"moonbridge/internal/protocol/google"
 )
 
@@ -34,7 +33,7 @@ func newTestClient(t *testing.T, srv *httptest.Server) *google.Client {
 
 // newTestAdapter creates a GeminiProviderAdapter with nil client and no hooks.
 func newTestAdapter() *google.GeminiProviderAdapter {
-	return google.NewGeminiProviderAdapter(config.Config{}, nil, format.CorePluginHooks{}, nil, nil)
+	return google.NewGeminiProviderAdapter(0, nil, format.CorePluginHooks{}, nil, nil)
 }
 
 // ============================================================================
@@ -1511,7 +1510,7 @@ func TestFromCoreRequest_PluginHooksCalled(t *testing.T) {
 			req.Model = "mutated-model"
 		},
 	}
-	adapter := google.NewGeminiProviderAdapter(config.Config{}, nil, hooks, nil, nil)
+	adapter := google.NewGeminiProviderAdapter(0, nil, hooks, nil, nil)
 
 	coreReq := &format.CoreRequest{
 		Model: "gemini-2.0-flash",
@@ -1631,7 +1630,7 @@ func TestFromCoreRequest_EmptyToolResult(t *testing.T) {
 func TestFromCoreRequest_DefaultMaxTokens(t *testing.T) {
 	// toGenerationConfig: when MaxTokens is 0 but config.DefaultMaxTokens > 0.
 	adapter := google.NewGeminiProviderAdapter(
-		config.Config{DefaultMaxTokens: 8192},
+		8192,
 		nil,
 		format.CorePluginHooks{},
 		nil,

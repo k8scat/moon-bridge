@@ -9,8 +9,8 @@ import (
 
 	mbtrics "moonbridge/internal/extension/metrics"
 	"moonbridge/internal/extension/plugin"
-	"moonbridge/internal/foundation/config"
-	"moonbridge/internal/foundation/db"
+	"moonbridge/internal/config"
+	"moonbridge/internal/db"
 
 	_ "modernc.org/sqlite"
 )

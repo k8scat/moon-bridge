@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"moonbridge/internal/foundation/config"
-	"moonbridge/internal/foundation/db"
+	"moonbridge/internal/config"
+	"moonbridge/internal/db"
 
 )
 

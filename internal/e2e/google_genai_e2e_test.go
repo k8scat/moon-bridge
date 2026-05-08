@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/format"
 	"moonbridge/internal/protocol/google"
 	"moonbridge/internal/protocol/openai"
 )

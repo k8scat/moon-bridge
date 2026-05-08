@@ -5,9 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"moonbridge/internal/foundation/config"
 	"moonbridge/internal/protocol/anthropic"
-	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/format"
 )
 
 // ---------------------------------------------------------------------------
@@ -23,7 +22,7 @@ func (n noopCacheManager) PlanAndInject(_ context.Context, _ *anthropic.MessageR
 func (n noopCacheManager) UpdateRegistry(_ context.Context, _, _ string, _ anthropic.Usage) {}
 
 func newTestAdapter() *anthropic.AnthropicProviderAdapter {
-	return anthropic.NewAnthropicProviderAdapter(config.Config{}, noopCacheManager{}, format.CorePluginHooks{})
+	return anthropic.NewAnthropicProviderAdapter(0, noopCacheManager{}, format.CorePluginHooks{})
 }
 
 
@@ -543,7 +542,7 @@ func TestFromCoreRequest_PluginHooksCalled(t *testing.T) {
 			req.Model = "mutated-model"
 		},
 	}
-		adapter := anthropic.NewAnthropicProviderAdapter(config.Config{}, noopCacheManager{}, hooks)
+		adapter := anthropic.NewAnthropicProviderAdapter(0, noopCacheManager{}, hooks)
 
 	coreReq := &format.CoreRequest{
 		Model: "claude-sonnet-4",

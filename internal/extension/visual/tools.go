@@ -2,7 +2,7 @@ package visual
 
 import (
 	"moonbridge/internal/protocol/anthropic"
-	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/format"
 )
 
 const (

@@ -12,10 +12,10 @@ import (
 	"strings"
 	"testing"
 
-	"moonbridge/internal/foundation/config"
+	"moonbridge/internal/config"
 	"moonbridge/internal/protocol/anthropic"
 	"moonbridge/internal/protocol/chat"
-	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/format"
 	"moonbridge/internal/protocol/google"
 	"moonbridge/internal/protocol/openai"
 )
@@ -95,7 +95,7 @@ func newTestRegistry(t testing.TB, cfg config.Config, hooks format.CorePluginHoo
 	reg := format.NewRegistry()
 
 	// --- OpenAI Responses client adapter (inbound) ---
-	oaiAdapter := openai.NewOpenAIAdapter(cfg, hooks)
+	oaiAdapter := openai.NewOpenAIAdapter(hooks)
 	if err := reg.RegisterClient(oaiAdapter); err != nil {
 		t.Fatalf("RegisterClient(openai-response): %v", err)
 	}
@@ -104,7 +104,7 @@ func newTestRegistry(t testing.TB, cfg config.Config, hooks format.CorePluginHoo
 	}
 
 	// --- Anthropic provider adapter ---
-	anthAdapter := anthropic.NewAnthropicProviderAdapter(cfg, &noopCacheManager{}, hooks)
+	anthAdapter := anthropic.NewAnthropicProviderAdapter(cfg.DefaultMaxTokens, &noopCacheManager{}, hooks)
 	if err := reg.RegisterProvider(anthAdapter); err != nil {
 		t.Fatalf("RegisterProvider(anthropic): %v", err)
 	}
@@ -113,7 +113,7 @@ func newTestRegistry(t testing.TB, cfg config.Config, hooks format.CorePluginHoo
 	}
 
 	// --- Google GenAI provider adapter ---
-	geminiAdapter := google.NewGeminiProviderAdapter(cfg, nil, hooks)
+	geminiAdapter := google.NewGeminiProviderAdapter(cfg.DefaultMaxTokens, nil, hooks, nil, nil)
 	if err := reg.RegisterProvider(geminiAdapter); err != nil {
 		t.Fatalf("RegisterProvider(google-genai): %v", err)
 	}
@@ -122,7 +122,7 @@ func newTestRegistry(t testing.TB, cfg config.Config, hooks format.CorePluginHoo
 	}
 
 	// --- OpenAI Chat provider adapter ---
-	chatAdapter := chat.NewChatProviderAdapter(cfg, nil, hooks)
+	chatAdapter := chat.NewChatProviderAdapter(cfg.DefaultMaxTokens, nil, hooks)
 	if err := reg.RegisterProvider(chatAdapter); err != nil {
 		t.Fatalf("RegisterProvider(openai-chat): %v", err)
 	}

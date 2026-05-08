@@ -7,11 +7,11 @@ import (
 	"moonbridge/internal/protocol/anthropic"
 	"time"
 
-	"moonbridge/internal/foundation/logger"
-	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/logger"
+	"moonbridge/internal/format"
 	"moonbridge/internal/protocol/openai"
 
-	foundationdb "moonbridge/internal/foundation/db"
+	foundationdb "moonbridge/internal/db"
 )
 
 // --- Request pipeline capabilities ---
@@ -90,7 +90,7 @@ type StreamInterceptor interface {
 type StreamEvent struct {
 	Type  string // "block_start", "block_delta", "block_stop"
 	Index int
-	Block *anthropic.ContentBlock // for block_start
+	Block *format.CoreContentBlock // for block_start
 	Delta anthropic.StreamDelta   // for block_delta
 }
 

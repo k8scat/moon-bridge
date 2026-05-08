@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"moonbridge/internal/foundation/session"
+	"moonbridge/internal/session"
 	"moonbridge/internal/service/api"
 )
 

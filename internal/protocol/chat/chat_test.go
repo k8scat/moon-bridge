@@ -12,9 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"moonbridge/internal/foundation/config"
 	"moonbridge/internal/protocol/chat"
-	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/format"
 )
 
 // ============================================================================
@@ -33,7 +32,7 @@ func newTestClient(t *testing.T, srv *httptest.Server) *chat.Client {
 
 // newTestAdapter creates a ChatProviderAdapter with nil client and no hooks.
 func newTestAdapter() *chat.ChatProviderAdapter {
-	return chat.NewChatProviderAdapter(config.Config{}, nil, format.CorePluginHooks{})
+	return chat.NewChatProviderAdapter(0, nil, format.CorePluginHooks{})
 }
 
 // ============================================================================
@@ -1277,7 +1276,7 @@ func TestFromCoreRequest_RawToolChoice(t *testing.T) {
 
 func TestFromCoreRequest_PluginHooks(t *testing.T) {
 	var hookCalled bool
-	adapter := chat.NewChatProviderAdapter(config.Config{}, nil, format.CorePluginHooks{
+	adapter := chat.NewChatProviderAdapter(0, nil, format.CorePluginHooks{
 		MutateCoreRequest: func(ctx context.Context, req *format.CoreRequest) {
 			hookCalled = true
 			req.Model = "mutated-model"
@@ -1929,7 +1928,7 @@ func TestFromCoreRequest_ToolChoiceUnknownMode(t *testing.T) {
 }
 
 func TestFromCoreRequest_DefaultMaxTokens(t *testing.T) {
-	adapter := chat.NewChatProviderAdapter(config.Config{DefaultMaxTokens: 4096}, nil, format.CorePluginHooks{})
+	adapter := chat.NewChatProviderAdapter(4096, nil, format.CorePluginHooks{})
 	result, err := adapter.FromCoreRequest(context.Background(), &format.CoreRequest{
 		Model:    "gpt-4o",
 		Messages: []format.CoreMessage{{Role: "user", Content: []format.CoreContentBlock{{Type: "text", Text: "hi"}}}},

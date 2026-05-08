@@ -8,9 +8,9 @@ import (
 
 	"context"
 
-	"moonbridge/internal/foundation/config"
-	"moonbridge/internal/foundation/logger"
-	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/config"
+	"moonbridge/internal/logger"
+	"moonbridge/internal/format"
 	"moonbridge/internal/protocol/openai"
 )
 

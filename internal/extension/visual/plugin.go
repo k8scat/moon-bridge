@@ -1,12 +1,13 @@
 package visual
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"moonbridge/internal/extension/plugin"
-	"moonbridge/internal/foundation/config"
-	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/config"
+	"moonbridge/internal/format"
 )
 
 const PluginName = "visual"
@@ -24,7 +25,7 @@ type Config struct {
 type Plugin struct {
 	plugin.BasePlugin
 	isEnabled EnabledFunc
-	appCfg    config.Config
+	pluginCfg config.PluginConfig
 }
 
 func NewPlugin(isEnabled ...EnabledFunc) *Plugin {
@@ -40,7 +41,7 @@ func (p *Plugin) Name() string { return PluginName }
 func (p *Plugin) ConfigSpecs() []config.ExtensionConfigSpec { return ConfigSpecs() }
 
 func (p *Plugin) Init(ctx plugin.PluginContext) error {
-	p.appCfg = ctx.AppConfig
+	p.pluginCfg = config.PluginFromGlobalConfig(&ctx.AppConfig)
 	return nil
 }
 
@@ -48,7 +49,10 @@ func (p *Plugin) EnabledForModel(model string) bool {
 	if p.isEnabled != nil {
 		return p.isEnabled(model)
 	}
-	return p.appCfg.ExtensionEnabled(PluginName, model)
+	if setting, ok := p.pluginCfg.Extensions[PluginName]; ok && setting.Enabled != nil {
+		return *setting.Enabled
+	}
+	return false
 }
 
 func (p *Plugin) InjectTools(_ *plugin.RequestContext) []format.CoreTool {
@@ -69,20 +73,40 @@ func ConfigSpecs() []config.ExtensionConfigSpec {
 			config.ExtensionScopeModel,
 			config.ExtensionScopeRoute,
 		},
-		Factory:  func() any { return &Config{} },
-		Validate: ValidateConfig,
+		Factory: func() any { return &Config{} },
+		Validate: func(cfg config.Config) error {
+			return ValidateConfig(
+				config.PluginFromGlobalConfig(&cfg),
+				config.ProviderFromGlobalConfig(&cfg),
+			)
+		},
 	}}
 }
 
-func ConfigForModel(appCfg config.Config, modelAlias string) (Config, bool) {
-	if !appCfg.ExtensionEnabled(PluginName, modelAlias) {
+func ConfigForModel(pluginCfg config.PluginConfig, modelAlias string) (Config, bool) {
+	// Check if visual extension is enabled globally.
+	if !pluginExtensionEnabled(pluginCfg, PluginName) {
 		return Config{}, false
 	}
-	cfg, _ := appCfg.ExtensionConfig(PluginName, modelAlias).(*Config)
+	// Decode typed config from global RawConfig.
+	var cfg *Config
+	if setting, ok := pluginCfg.Extensions[PluginName]; ok && len(setting.RawConfig) > 0 {
+		data, err := json.Marshal(setting.RawConfig)
+		if err == nil {
+			_ = json.Unmarshal(data, &cfg)
+		}
+	}
 	if cfg == nil {
 		return Config{}, true
 	}
 	return cfg.Normalized(), true
+}
+
+func pluginExtensionEnabled(pluginCfg config.PluginConfig, name string) bool {
+	if setting, ok := pluginCfg.Extensions[name]; ok && setting.Enabled != nil {
+		return *setting.Enabled
+	}
+	return false
 }
 
 func (cfg Config) Normalized() Config {
@@ -97,15 +121,15 @@ func (cfg Config) Normalized() Config {
 	return cfg
 }
 
-func ValidateConfig(appCfg config.Config) error {
-	for alias := range appCfg.Routes {
-		if err := validateModelConfig(appCfg, alias); err != nil {
+func ValidateConfig(pluginCfg config.PluginConfig, providerCfg config.ProviderConfig) error {
+	for alias := range providerCfg.Routes {
+		if err := validateModelConfig(pluginCfg, providerCfg, alias); err != nil {
 			return err
 		}
 	}
-	for providerKey, def := range appCfg.ProviderDefs {
+	for providerKey, def := range providerCfg.Providers {
 		for modelName := range def.Models {
-			if err := validateModelConfig(appCfg, providerKey+"/"+modelName); err != nil {
+			if err := validateModelConfig(pluginCfg, providerCfg, providerKey+"/"+modelName); err != nil {
 				return err
 			}
 		}
@@ -113,8 +137,8 @@ func ValidateConfig(appCfg config.Config) error {
 	return nil
 }
 
-func validateModelConfig(appCfg config.Config, modelAlias string) error {
-	cfg, ok := ConfigForModel(appCfg, modelAlias)
+func validateModelConfig(pluginCfg config.PluginConfig, providerCfg config.ProviderConfig, modelAlias string) error {
+	cfg, ok := ConfigForModel(pluginCfg, modelAlias)
 	if !ok {
 		return nil
 	}
@@ -124,7 +148,7 @@ func validateModelConfig(appCfg config.Config, modelAlias string) error {
 	if cfg.Model == "" {
 		return fmt.Errorf("extensions.%s.config.model is required when visual is enabled for %s", PluginName, modelAlias)
 	}
-	def, ok := appCfg.ProviderDefs[cfg.Provider]
+	def, ok := providerCfg.Providers[cfg.Provider]
 	if !ok {
 		return fmt.Errorf("extensions.%s.config.provider references unknown provider %q", PluginName, cfg.Provider)
 	}
@@ -136,9 +160,7 @@ func validateModelConfig(appCfg config.Config, modelAlias string) error {
 var (
 	_ plugin.Plugin             = (*Plugin)(nil)
 	_ plugin.ConfigSpecProvider = (*Plugin)(nil)
-	
 )
-
 
 var (
 	_ plugin.Plugin             = (*Plugin)(nil)

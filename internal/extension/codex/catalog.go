@@ -14,8 +14,8 @@ import (
 	"strings"
 
 	"moonbridge/internal/extension/visual"
-	"moonbridge/internal/foundation/config"
-	"moonbridge/internal/foundation/modelref"
+	"moonbridge/internal/config"
+	"moonbridge/internal/modelref"
 )
 
 // ModelInfo represents a model entry in the OpenAI /v1/models response.
@@ -141,26 +141,26 @@ func BuildModelInfoFromProviderModel(slug string, ownedBy string, meta config.Mo
 }
 
 // BuildModelInfosFromConfig returns Codex model catalog entries.
-// Directly iterates cfg.Models (canonical model definitions) and appends route aliases.
+// Directly iterates provider models (canonical model definitions) and appends route aliases.
 // Models without a provider offer or route are excluded — they are dead entries.
-func BuildModelInfosFromConfig(cfg config.Config) []ModelInfo {
+func BuildModelInfosFromConfig(providerCfg config.ProviderConfig, pluginCfg config.PluginConfig) []ModelInfo {
 	// Build set of model names that have at least one provider offer.
 	offeredModels := make(map[string]bool)
-	for _, def := range cfg.ProviderDefs {
+	for _, def := range providerCfg.Providers {
 		for _, offer := range def.Offers {
 			offeredModels[offer.Model] = true
 		}
 	}
 	// Build set of model names targeted by routes.
 	routeModels := make(map[string]bool)
-	for _, route := range cfg.Routes {
+	for _, route := range providerCfg.Routes {
 		if route.Model != "" {
 			routeModels[route.Model] = true
 		}
 	}
 	// Filter: only include models that are offered by a provider or targeted by a route.
-	modelSlugs := make([]string, 0, len(cfg.Models))
-	for slug := range cfg.Models {
+	modelSlugs := make([]string, 0, len(providerCfg.Models))
+	for slug := range providerCfg.Models {
 		if offeredModels[slug] || routeModels[slug] {
 			modelSlugs = append(modelSlugs, slug)
 		}
@@ -169,7 +169,7 @@ func BuildModelInfosFromConfig(cfg config.Config) []ModelInfo {
 
 	var models []ModelInfo
 	for _, slug := range modelSlugs {
-		def := cfg.Models[slug]
+		def := providerCfg.Models[slug]
 		displayName := def.DisplayName
 		if displayName == "" {
 			displayName = DisplayNameFromSlug(slug)
@@ -189,14 +189,14 @@ func BuildModelInfosFromConfig(cfg config.Config) []ModelInfo {
 		))
 	}
 
-	// Fallback: if cfg.Models is empty, build from ProviderDefs Models (Phase 1 compat).
-	if len(cfg.Models) == 0 {
-		models = buildModelInfosFromProviderDefs(cfg)
+	// Fallback: if providerCfg.Models is empty, build from ProviderDefs Models (Phase 1 compat).
+	if len(providerCfg.Models) == 0 {
+		models = buildModelInfosFromProviderDefs(providerCfg)
 	}
 
 	// Route alias append (non-deduplicated model names only).
-	routeAliases := make([]string, 0, len(cfg.Routes))
-	for alias := range cfg.Routes {
+	routeAliases := make([]string, 0, len(providerCfg.Routes))
+	for alias := range providerCfg.Routes {
 		routeAliases = append(routeAliases, alias)
 	}
 	sort.Strings(routeAliases)
@@ -209,7 +209,7 @@ func BuildModelInfosFromConfig(cfg config.Config) []ModelInfo {
 			continue
 		}
 		seen[alias] = true
-		route := cfg.Routes[alias]
+		route := providerCfg.Routes[alias]
 		ownedBy := "system"
 		if route.Provider != "" {
 			ownedBy = route.Provider
@@ -217,12 +217,13 @@ func BuildModelInfosFromConfig(cfg config.Config) []ModelInfo {
 		models = append(models, BuildModelInfoFromRoute(alias, ownedBy, route))
 	}
 
-	models = injectVisualModalities(models, cfg)
+	models = injectVisualModalities(models, pluginCfg)
 	return models
 }
+
 // buildModelInfosFromProviderDefs builds catalog entries from ProviderDef models.
-// This is a fallback for Phase 1 when cfg.Models is not yet populated.
-func buildModelInfosFromProviderDefs(cfg config.Config) []ModelInfo {
+// This is a fallback for Phase 1 when canonical Models map is not yet populated.
+func buildModelInfosFromProviderDefs(providerCfg config.ProviderConfig) []ModelInfo {
 	// First pass: group by upstream model name across providers.
 	type providerEntry struct {
 		key  string
@@ -230,13 +231,13 @@ func buildModelInfosFromProviderDefs(cfg config.Config) []ModelInfo {
 	}
 	grouped := make(map[string][]providerEntry)
 
-	providerKeys := make([]string, 0, len(cfg.ProviderDefs))
-	for key := range cfg.ProviderDefs {
+	providerKeys := make([]string, 0, len(providerCfg.Providers))
+	for key := range providerCfg.Providers {
 		providerKeys = append(providerKeys, key)
 	}
 	sort.Strings(providerKeys)
 	for _, providerKey := range providerKeys {
-		def := cfg.ProviderDefs[providerKey]
+		def := providerCfg.Providers[providerKey]
 		modelNames := make([]string, 0, len(def.Models))
 		for name := range def.Models {
 			modelNames = append(modelNames, name)
@@ -337,29 +338,29 @@ func buildModelInfosFromProviderDefs(cfg config.Config) []ModelInfo {
 	}
 	return models
 }
-func injectVisualModalities(models []ModelInfo, cfg config.Config) []ModelInfo {
+
+func injectVisualModalities(models []ModelInfo, pluginCfg config.PluginConfig) []ModelInfo {
 	result := make([]ModelInfo, len(models))
 	copy(result, models)
 	for i, m := range result {
-		if !cfg.ExtensionEnabled(visual.PluginName, m.Slug) {
-			continue
-		}
-		hasImage := false
-		for _, mod := range m.InputModalities {
-			if mod == "image" {
-				hasImage = true
-				break
+		if setting, ok := pluginCfg.Extensions[visual.PluginName]; ok && setting.Enabled != nil && *setting.Enabled {
+			hasImage := false
+			for _, mod := range m.InputModalities {
+				if mod == "image" {
+					hasImage = true
+					break
+				}
 			}
-		}
-		if !hasImage {
-			// Append "image" to existing modalities; preserve any non-standard
-			// modalities (e.g. "audio") the user may have configured.
-			// Default to ["text"] if the list is empty.
-			base := result[i].InputModalities
-			if len(base) == 0 {
-				base = []string{"text"}
+			if !hasImage {
+				// Append "image" to existing modalities; preserve any non-standard
+				// modalities (e.g. "audio") the user may have configured.
+				// Default to ["text"] if the list is empty.
+				base := result[i].InputModalities
+				if len(base) == 0 {
+					base = []string{"text"}
+				}
+				result[i].InputModalities = append(base, "image")
 			}
-			result[i].InputModalities = append(base, "image")
 		}
 	}
 	return result
@@ -437,10 +438,10 @@ func truncationPolicyForModel(string) TruncationPolicyConfig {
 
 // WriteModelsCatalog generates a Codex-compatible models_catalog.json from
 // provider model catalogs, with routes appended as fallback aliases.
-func WriteModelsCatalog(path string, cfg config.Config) error {
+func WriteModelsCatalog(path string, providerCfg config.ProviderConfig, pluginCfg config.PluginConfig) error {
 	catalog := struct {
 		Models []ModelInfo `json:"models"`
-	}{Models: BuildModelInfosFromConfig(cfg)}
+	}{Models: BuildModelInfosFromConfig(providerCfg, pluginCfg)}
 	data, err := json.MarshalIndent(catalog, "", "  ")
 	if err != nil {
 		return err
@@ -458,20 +459,52 @@ func valueOrDefault(value string, fallback string) string {
 	return value
 }
 
+// routeFor resolves a model alias to a RouteEntry from a ProviderConfig.
+func routeFor(providerCfg config.ProviderConfig, modelAlias string) config.RouteEntry {
+	if provider, upstream := modelref.Parse(modelAlias); provider != "" {
+		if def, ok := providerCfg.Providers[provider]; ok {
+			entry := config.RouteEntry{Provider: provider, Model: upstream}
+			if meta, ok := def.Models[upstream]; ok {
+				entry.ContextWindow = meta.ContextWindow
+				entry.MaxOutputTokens = meta.MaxOutputTokens
+				entry.InputPrice = meta.InputPrice
+				entry.OutputPrice = meta.OutputPrice
+				entry.CacheWritePrice = meta.CacheWritePrice
+				entry.CacheReadPrice = meta.CacheReadPrice
+				entry.DisplayName = meta.DisplayName
+				entry.Description = meta.Description
+				entry.BaseInstructions = meta.BaseInstructions
+				entry.DefaultReasoningLevel = meta.DefaultReasoningLevel
+				entry.SupportedReasoningLevels = meta.SupportedReasoningLevels
+				entry.SupportsReasoningSummaries = meta.SupportsReasoningSummaries
+				entry.DefaultReasoningSummary = meta.DefaultReasoningSummary
+				entry.InputModalities = meta.InputModalities
+				entry.SupportsImageDetailOriginal = meta.SupportsImageDetailOriginal
+				entry.WebSearch = meta.WebSearch
+				entry.Extensions = meta.Extensions
+			}
+			return entry
+		}
+	}
+	return providerCfg.Routes[modelAlias]
+}
+
 // GenerateConfigToml writes a Codex config.toml fragment to output for a given
 // model alias. If codexHome is non-empty, it also writes models_catalog.json
 // there and adds a model_catalog_json pointer.
-func GenerateConfigToml(output io.Writer, modelAlias string, baseURL string, codexHome string, cfg config.Config) error {
-	route := cfg.RouteFor(modelAlias)
+func GenerateConfigToml(output io.Writer, modelAlias string, baseURL string, codexHome string, providerCfg config.ProviderConfig, serverCfg config.ServerConfig) error {
+	route := routeFor(providerCfg, modelAlias)
 
 	// When modelAlias is a direct provider/model reference (not a named route),
 	// normalize to model(provider) format so Codex can match it against catalog slugs.
 	catalogAlias := modelAlias
-	if _, isRoute := cfg.Routes[modelAlias]; !isRoute {
+	if _, isRoute := providerCfg.Routes[modelAlias]; !isRoute {
 		if provider, model := modelref.Parse(modelAlias); provider != "" {
 			catalogAlias = model + "(" + provider + ")"
 		}
 	}
+
+	pluginCfg := config.PluginConfig{}
 
 	fmt.Fprintf(output, "model = %q\n", catalogAlias)
 	fmt.Fprintln(output, `model_provider = "moonbridge"`)
@@ -485,12 +518,12 @@ func GenerateConfigToml(output io.Writer, modelAlias string, baseURL string, cod
 	// Write models catalog JSON so Codex uses our metadata instead of bundled presets.
 	if codexHome != "" {
 		catalogPath := filepath.Join(codexHome, "models_catalog.json")
-		if err := WriteModelsCatalog(catalogPath, cfg); err != nil {
+		if err := WriteModelsCatalog(catalogPath, providerCfg, pluginCfg); err != nil {
 			return fmt.Errorf("write models catalog: %w", err)
 		}
 		fmt.Fprintf(output, "model_catalog_json = %q\n", catalogPath)
-		if cfg.AuthToken != "" {
-			if err := writeAuthJSON(filepath.Join(codexHome, "auth.json"), cfg.AuthToken); err != nil {
+		if serverCfg.AuthToken != "" {
+			if err := writeAuthJSON(filepath.Join(codexHome, "auth.json"), serverCfg.AuthToken); err != nil {
 				return fmt.Errorf("write auth.json: %w", err)
 			}
 		}
@@ -500,7 +533,7 @@ func GenerateConfigToml(output io.Writer, modelAlias string, baseURL string, cod
 	fmt.Fprintln(output, "[model_providers.moonbridge]")
 	fmt.Fprintln(output, `name = "Moon Bridge"`)
 	fmt.Fprintf(output, "base_url = %q\n", valueOrDefault(baseURL, "http://"+config.DefaultAddr+"/v1"))
-	if cfg.AuthToken != "" {
+	if serverCfg.AuthToken != "" {
 		fmt.Fprintln(output, `requires_openai_auth = true`)
 	}
 	fmt.Fprintln(output, `wire_api = "responses"`)

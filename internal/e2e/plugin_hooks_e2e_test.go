@@ -14,7 +14,7 @@ import (
 
 	"moonbridge/internal/extension/plugin"
 	"moonbridge/internal/protocol/anthropic"
-	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/format"
 	"moonbridge/internal/protocol/openai"
 )
 

@@ -5,13 +5,12 @@ import (
 	"encoding/json"
 	"testing"
 
-	"moonbridge/internal/foundation/config"
-	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/format"
 	"moonbridge/internal/protocol/openai"
 )
 
 func TestToCoreRequest_BasicText(t *testing.T) {
-	adapter := openai.NewOpenAIAdapter(config.Config{}, format.CorePluginHooks{})
+	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
 
 	req := &openai.ResponsesRequest{
 		Model: "gpt-4o",
@@ -41,7 +40,7 @@ func TestToCoreRequest_BasicText(t *testing.T) {
 }
 
 func TestToCoreRequest_WithInstructions(t *testing.T) {
-	adapter := openai.NewOpenAIAdapter(config.Config{}, format.CorePluginHooks{})
+	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
 
 	req := &openai.ResponsesRequest{
 		Model:        "gpt-4o",
@@ -62,7 +61,7 @@ func TestToCoreRequest_WithInstructions(t *testing.T) {
 }
 
 func TestFromCoreResponse_Basic(t *testing.T) {
-	adapter := openai.NewOpenAIAdapter(config.Config{}, format.CorePluginHooks{})
+	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
 
 	coreResp := &format.CoreResponse{
 		ID:     "resp_123",
@@ -93,7 +92,7 @@ func TestFromCoreResponse_Basic(t *testing.T) {
 }
 
 func TestFromCoreResponse_Error(t *testing.T) {
-	adapter := openai.NewOpenAIAdapter(config.Config{}, format.CorePluginHooks{})
+	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
 
 	coreResp := &format.CoreResponse{
 		Status: "failed",
@@ -118,7 +117,7 @@ func TestFromCoreResponse_Error(t *testing.T) {
 }
 
 func TestToCoreRequest_NilInput(t *testing.T) {
-	adapter := openai.NewOpenAIAdapter(config.Config{}, format.CorePluginHooks{})
+	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
 
 	req := &openai.ResponsesRequest{
 		Model: "gpt-4o",

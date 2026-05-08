@@ -3,7 +3,7 @@ package config_test
 import (
 	"testing"
 
-	"moonbridge/internal/foundation/config"
+	"moonbridge/internal/config"
 )
 
 func TestConfigToFileConfigRoundtrip(t *testing.T) {

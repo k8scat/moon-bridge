@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"moonbridge/internal/foundation/config"
-	"moonbridge/internal/foundation/db"
+	"moonbridge/internal/config"
+	"moonbridge/internal/db"
 	"moonbridge/internal/service/runtime"
 	"moonbridge/internal/service/store"
 

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"moonbridge/internal/foundation/config"
+	"moonbridge/internal/config"
 	"moonbridge/internal/service/provider"
 	"moonbridge/internal/service/stats"
 	mbtrace "moonbridge/internal/service/trace"
@@ -312,8 +312,8 @@ func TestPricingIndexIncludesProviderModelSlugs(t *testing.T) {
 }
 
 func TestBuildProviderDefsFromConfigKeepsMultiProviderDefinitions(t *testing.T) {
-	cfg := config.Config{
-		ProviderDefs: map[string]config.ProviderDef{
+	cfg := config.ProviderConfig{
+		Providers: map[string]config.ProviderDef{
 			"deepseek": {
 				BaseURL: "https://deepseek.example.test",
 				APIKey:  "deepseek-key",

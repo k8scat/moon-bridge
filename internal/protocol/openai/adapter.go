@@ -15,8 +15,7 @@ import (
 	"strings"
 	"sync"
 
-	"moonbridge/internal/foundation/config"
-	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/format"
 )
 
 // ============================================================================
@@ -31,7 +30,7 @@ import (
 //
 // The adapter is stateless; all configuration is injected via the constructor.
 type OpenAIAdapter struct {
-	cfg   config.Config
+
 	hooks format.CorePluginHooks
 
 	streamMu     sync.Mutex
@@ -39,9 +38,8 @@ type OpenAIAdapter struct {
 }
 
 // NewOpenAIAdapter creates a new OpenAIAdapter with the given config and hooks.
-func NewOpenAIAdapter(cfg config.Config, hooks format.CorePluginHooks) *OpenAIAdapter {
+func NewOpenAIAdapter(hooks format.CorePluginHooks) *OpenAIAdapter {
 	return &OpenAIAdapter{
-		cfg:   cfg,
 		hooks: hooks.WithDefaults(),
 	}
 }

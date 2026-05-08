@@ -10,20 +10,23 @@ import (
 	"time"
 
 	"log/slog"
-	"moonbridge/internal/foundation/config"
-	"moonbridge/internal/foundation/db"
+	"moonbridge/internal/config"
+	"moonbridge/internal/db"
 	"moonbridge/internal/service/store"
-	"moonbridge/internal/foundation/logger"
+	"moonbridge/internal/logger"
 	"moonbridge/internal/protocol/anthropic"
 	"moonbridge/internal/protocol/google"
 	"moonbridge/internal/protocol/chat"
 	"moonbridge/internal/protocol/cache"
-	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/format"
 	"moonbridge/internal/protocol/openai"
 	"moonbridge/internal/service/provider"
 	"moonbridge/internal/service/proxy"
 	"moonbridge/internal/service/runtime"
 	"moonbridge/internal/service/server"
+	"moonbridge/internal/service/server/session"
+	"moonbridge/internal/service/server/trace"
+	"moonbridge/internal/service/server/usage"
 	"moonbridge/internal/service/stats"
 	mbtrace "moonbridge/internal/service/trace"
 )
@@ -55,11 +58,22 @@ func RunServer(ctx context.Context, cfg config.Config, errors io.Writer) error {
 }
 
 func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) error {
-	// === Phase 1: Bootstrap from YAML ===
+	// Construct domain configs from global config.
+	serverCfg := config.ServerFromGlobalConfig(&cfg)
+	cacheCfg := config.CacheFromGlobalConfig(&cfg)
+	proxyCfg := config.ProxyFromGlobalConfig(&cfg)
+	storeCfg := config.StoreFromGlobalConfig(&cfg)
+	persistCfg := config.PersistenceFromGlobalConfig(&cfg)
+	providerCfg := config.ProviderFromGlobalConfig(&cfg)
+	_ = persistCfg   // used in db init
+	_ = storeCfg     // used in config store
+	_ = proxyCfg     // used in proxy mode
+
+		// === Phase 1: Bootstrap from YAML ===
 
 	// Build multi-provider infrastructure from YAML config.
-	providerDefs := provider.BuildProviderDefsFromConfig(cfg)
-	modelRoutes := provider.BuildModelRoutesFromConfig(cfg)
+	providerDefs := provider.BuildProviderDefsFromConfig(providerCfg)
+	modelRoutes := provider.BuildModelRoutesFromConfig(providerCfg)
 	providerMgr, err := provider.NewProviderManager(providerDefs, modelRoutes)
 	if err != nil {
 		return fmt.Errorf("init provider manager: %w", err)
@@ -70,7 +84,7 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 	resolvePerProviderWebSearch(ctx, cfg, providerMgr, errors)
 
 	sessionStats := stats.NewSessionStats()
-	pricing := provider.BuildPricingFromConfig(cfg)
+	pricing := provider.BuildPricingFromConfig(providerCfg)
 	if len(pricing) > 0 {
 		sessionStats.SetPricing(pricing)
 	}
@@ -82,9 +96,9 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 	logTrace(errors, "transform", tracer)
 
 	// Determine the default provider to use as the fallback Provider.
-	var fallbackProvider server.Provider
+	var fallbackProvider provider.ProviderClient
 	if defaultClient != nil {
-		fallbackProvider = defaultClient
+		fallbackProvider = provider.NewAnthropicClientAdapter(defaultClient)
 	}
 
 	// Register plugins.
@@ -131,10 +145,11 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 					"providers", len(dbCfg.ProviderDefs),
 					"routes", len(dbCfg.Routes))
 				cfg = *dbCfg
+				dbProviderCfg := config.ProviderFromGlobalConfig(&cfg)
 
 				// Rebuild provider manager and pricing from DB-loaded config.
-				providerDefs = provider.BuildProviderDefsFromConfig(cfg)
-				modelRoutes = provider.BuildModelRoutesFromConfig(cfg)
+				providerDefs = provider.BuildProviderDefsFromConfig(dbProviderCfg)
+				modelRoutes = provider.BuildModelRoutesFromConfig(dbProviderCfg)
 				providerMgr, err = provider.NewProviderManager(providerDefs, modelRoutes)
 				if err != nil {
 					return fmt.Errorf("rebuild provider manager from DB: %w", err)
@@ -142,7 +157,7 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 				_ = resolveDefaultClient(providerMgr, errors)
 				resolvePerProviderWebSearch(ctx, cfg, providerMgr, errors)
 
-				pricing = provider.BuildPricingFromConfig(cfg)
+				pricing = provider.BuildPricingFromConfig(dbProviderCfg)
 				if len(pricing) > 0 {
 					sessionStats.SetPricing(pricing)
 				}
@@ -177,44 +192,44 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 	coreHooks := plugins.CorePluginHooks()
 
 	// Inbound: OpenAI Responses client adapter.
-	oaiAdapter := openai.NewOpenAIAdapter(cfg, coreHooks)
+	oaiAdapter := openai.NewOpenAIAdapter(coreHooks)
 	_ = adapterReg.RegisterClient(oaiAdapter)
 	_ = adapterReg.RegisterClientStream(oaiAdapter)
 
 	// Upstream: Anthropic provider adapter with cache manager.
 	cacheMgr := anthropic.NewCacheManager(&cfg.Cache, cacheReg)
-	anthAdapter := anthropic.NewAnthropicProviderAdapter(cfg, cacheMgr, coreHooks)
+	anthAdapter := anthropic.NewAnthropicProviderAdapter(cfg.DefaultMaxTokens, cacheMgr, coreHooks)
 	_ = adapterReg.RegisterProvider(anthAdapter)
 	_ = adapterReg.RegisterProviderStream(anthAdapter)
 
 	// Upstream: Google GenAI provider adapter.
-	googleCfg := &cache.PlanCacheConfig{
-		Mode:                     cfg.Cache.Mode,
-		TTL:                      cfg.Cache.TTL,
-		PromptCaching:            cfg.Cache.PromptCaching,
-		AutomaticPromptCache:     cfg.Cache.AutomaticPromptCache,
-		ExplicitCacheBreakpoints: cfg.Cache.ExplicitCacheBreakpoints,
-		AllowRetentionDowngrade:  cfg.Cache.AllowRetentionDowngrade,
-		MaxBreakpoints:           cfg.Cache.MaxBreakpoints,
-		MinCacheTokens:           cfg.Cache.MinCacheTokens,
-		ExpectedReuse:            cfg.Cache.ExpectedReuse,
-		MinimumValueScore:        cfg.Cache.MinimumValueScore,
-		MinBreakpointTokens:      cfg.Cache.MinBreakpointTokens,
-	}
-	googleAdapter := google.NewGeminiProviderAdapter(cfg, nil, coreHooks, googleCfg, cacheReg)
+		googleCfg := &cache.PlanCacheConfig{
+			Mode:                     cacheCfg.Mode,
+			TTL:                      cacheCfg.TTL,
+			PromptCaching:            cacheCfg.PromptCaching,
+			AutomaticPromptCache:     cacheCfg.AutomaticPromptCache,
+			ExplicitCacheBreakpoints: cacheCfg.ExplicitCacheBreakpoints,
+			AllowRetentionDowngrade:  cacheCfg.AllowRetentionDowngrade,
+			MaxBreakpoints:           cacheCfg.MaxBreakpoints,
+			MinCacheTokens:           cacheCfg.MinCacheTokens,
+			ExpectedReuse:            cacheCfg.ExpectedReuse,
+			MinimumValueScore:        cacheCfg.MinimumValueScore,
+			MinBreakpointTokens:      cacheCfg.MinBreakpointTokens,
+		}
+	googleAdapter := google.NewGeminiProviderAdapter(cfg.DefaultMaxTokens, nil, coreHooks, googleCfg, cacheReg)
 	_ = adapterReg.RegisterProvider(googleAdapter)
 	_ = adapterReg.RegisterProviderStream(googleAdapter)
 
 	// Upstream: OpenAI Chat provider adapter.
-	chatAdapter := chat.NewChatProviderAdapter(cfg, nil, coreHooks)
+	chatAdapter := chat.NewChatProviderAdapter(cfg.DefaultMaxTokens, nil, coreHooks)
 	_ = adapterReg.RegisterProvider(chatAdapter)
 	_ = adapterReg.RegisterProviderStream(chatAdapter)
 
 	slog.Info("Adapter dispatch path enabled", "registry", "format.Registry")
 
 	// Build protocol-specific HTTP clients from provider configs.
-	chatClients := make(map[string]*chat.Client, len(cfg.ProviderDefs))
-	googleClients := make(map[string]*google.Client, len(cfg.ProviderDefs))
+	chatClients := make(map[string]any, len(cfg.ProviderDefs))
+	googleClients := make(map[string]any, len(cfg.ProviderDefs))
 	for key, def := range cfg.ProviderDefs {
 		switch def.Protocol {
 		case config.ProtocolOpenAIChat:
@@ -237,7 +252,14 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 		}
 	}
 
+
+	// Create sub-package managers for session, usage, and trace.
+	sessMgr := session.NewInMemoryManager(server.NewSessionConfigAdapter(serverCfg), plugins)
+	usageTrk := usage.NewStatsTracker(sessionStats)
+	traceWtr := trace.NewFileWriter(tracer, errors)
+
 	handler := server.New(server.Config{
+		ServerCfg:      serverCfg,
 		Provider:        fallbackProvider,
 		ProviderMgr:     providerMgr,
 		ChatClients:     chatClients,
@@ -246,9 +268,12 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 		TraceErrors:     errors,
 		Stats:           sessionStats,
 		PluginRegistry:  plugins,
-		AppConfig:       cfg,
+		AppConfig:       serverCfg,
 		Runtime:         rt,
 		AdapterRegistry: adapterReg,
+		SessionManager:  sessMgr,
+		UsageTracker:    usageTrk,
+		TraceWriter:     traceWtr,
 	})
 
 	wrapped := handler
@@ -267,7 +292,11 @@ func resolveDefaultClient(pm *provider.ProviderManager, errors io.Writer) *anthr
 		slog.Warn("默认提供商客户端不可用", "error", err)
 		return nil
 	}
-	return client
+	if acc, ok := client.(provider.AnthropicClientAccessor); ok {
+		return acc.AnthropicClient()
+	}
+	slog.Warn("默认提供商客户端不支持访问底层客户端")
+	return nil
 }
 
 // webSearchProber interface and following functions are unchanged.
@@ -385,7 +414,7 @@ func resolveModelWebSearch(ctx context.Context, alias string, modelWS config.Web
 }
 
 func probeProviderWebSearch(ctx context.Context, key string, pm *provider.ProviderManager, errors io.Writer) string {
-	client, err := pm.ClientForKey(key)
+	pc, err := pm.ClientForKey(key)
 	if err != nil {
 		slog.Warn("网页搜索探测跳过：客户端不可用", "provider", key, "error", err)
 		return "disabled"
@@ -397,6 +426,12 @@ func probeProviderWebSearch(ctx context.Context, key string, pm *provider.Provid
 		return "disabled"
 	}
 
+	acc, ok := pc.(provider.AnthropicClientAccessor)
+	if !ok {
+		slog.Warn("网页搜索探测跳过：客户端不支持访问", "provider", key)
+		return "disabled"
+	}
+	client := acc.AnthropicClient()
 	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	supported, err := client.ProbeWebSearch(probeCtx, upstreamModel)
@@ -415,7 +450,17 @@ func probeProviderWebSearch(ctx context.Context, key string, pm *provider.Provid
 }
 
 func probeModelWebSearch(ctx context.Context, modelAlias string, pm *provider.ProviderManager, errors io.Writer) string {
-	upstreamModel, client, err := pm.ClientFor(modelAlias)
+	upstreamModel, pc, err := pm.ClientFor(modelAlias)
+	if err != nil {
+		slog.Warn("网页搜索模型探测跳过：客户端不可用", "model", modelAlias, "error", err)
+		return "disabled"
+	}
+	acc, ok := pc.(provider.AnthropicClientAccessor)
+	if !ok {
+		slog.Warn("网页搜索模型探测跳过：客户端不支持访问", "model", modelAlias)
+		return "disabled"
+	}
+	client := acc.AnthropicClient()
 	if err != nil {
 		slog.Warn("网页搜索模型探测跳过：客户端不可用", "model", modelAlias, "error", err)
 		return "disabled"

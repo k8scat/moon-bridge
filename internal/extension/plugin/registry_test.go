@@ -3,8 +3,7 @@ package plugin_test
 import (
 	"encoding/json"
 	"testing"
-	"moonbridge/internal/protocol/format"
-	"moonbridge/internal/protocol/anthropic"
+	"moonbridge/internal/format"
 
 	"moonbridge/internal/extension/plugin"
 	"moonbridge/internal/protocol/openai"
@@ -88,7 +87,7 @@ func (p *testStreamInterceptor) NewStreamState() any {
 }
 
 func (p *testStreamInterceptor) OnStreamEvent(ctx *plugin.StreamContext, event plugin.StreamEvent) (bool, []openai.StreamEvent) {
-	if event.Type == "block_start" && event.Block != nil && event.Block.Type == "thinking" {
+	if event.Type == "block_start" && event.Block != nil && event.Block.Type == "reasoning" {
 		return true, nil
 	}
 	return false, nil
@@ -219,14 +218,14 @@ func TestRegistryOnStreamEvent(t *testing.T) {
 	r := plugin.NewRegistry(nil)
 	r.Register(&testStreamInterceptor{testPlugin: testPlugin{name: "si", enabled: true}})
 
-	states := r.NewStreamStates("model")
-	block := &anthropic.ContentBlock{Type: "thinking"}
+		states := r.NewStreamStates("model")
+		block := &format.CoreContentBlock{Type: "reasoning"}
 	consumed, _ := r.OnStreamEvent("model", plugin.StreamEvent{Type: "block_start", Index: 0, Block: block}, states)
 	if !consumed {
 		t.Fatal("should consume thinking block_start")
 	}
 
-	consumed2, _ := r.OnStreamEvent("model", plugin.StreamEvent{Type: "block_start", Index: 1, Block: &anthropic.ContentBlock{Type: "text"}}, states)
+	consumed2, _ := r.OnStreamEvent("model", plugin.StreamEvent{Type: "block_start", Index: 1, Block: &format.CoreContentBlock{Type: "text"}}, states)
 	if consumed2 {
 		t.Fatal("should not consume text block_start")
 	}
@@ -248,5 +247,3 @@ func TestRegistryNilSafe(t *testing.T) {
 		t.Fatal("nil registry should not have enabled plugins")
 	}
 }
-
-

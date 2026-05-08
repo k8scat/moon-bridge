@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"moonbridge/internal/foundation/config"
+	"moonbridge/internal/config"
 )
 
 // ---- JSON response helpers ----

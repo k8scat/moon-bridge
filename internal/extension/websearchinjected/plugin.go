@@ -5,7 +5,7 @@ import (
 	"moonbridge/internal/protocol/anthropic"
 	"moonbridge/internal/service/provider"
 	"moonbridge/internal/extension/websearch"
-	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/format"
 )
 
 const PluginName = "web_search_injected"

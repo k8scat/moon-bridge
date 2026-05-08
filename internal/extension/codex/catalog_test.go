@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"moonbridge/internal/extension/codex"
-	"moonbridge/internal/foundation/config"
+	"moonbridge/internal/config"
 )
 
 func TestBuildModelInfoFromRouteEnablesApplyPatchFreeform(t *testing.T) {
@@ -33,8 +33,8 @@ func TestBuildModelInfoFromRouteUsesTokenTruncationPolicy(t *testing.T) {
 }
 
 func TestBuildModelInfosFromConfigIncludesProviderModelsBeforeRouteFallback(t *testing.T) {
-	models := codex.BuildModelInfosFromConfig(config.Config{
-		ProviderDefs: map[string]config.ProviderDef{
+	models := codex.BuildModelInfosFromConfig(config.ProviderConfig{
+		Providers: map[string]config.ProviderDef{
 			"openai": {
 				BaseURL: "https://api.openai.com",
 				APIKey:  "sk-test",
@@ -44,7 +44,7 @@ func TestBuildModelInfosFromConfigIncludesProviderModelsBeforeRouteFallback(t *t
 				Protocol: "openai-response",
 			},
 		},
-	})
+	}, config.PluginConfig{})
 	if len(models) != 1 {
 		t.Fatalf("expected 1 model (model(provider) only), got %d", len(models))
 	}
@@ -74,8 +74,7 @@ func TestBuildModelInfoPreservesReasoningLevels(t *testing.T) {
 }
 
 func TestGenerateConfigTomlDoesNotSetServiceTier(t *testing.T) {
-	var output bytes.Buffer
-	err := codex.GenerateConfigToml(&output, "moonbridge", "http://127.0.0.1:38440/v1", "", config.Config{
+	cfg := config.Config{
 		Routes: map[string]config.RouteEntry{
 			"moonbridge": {
 				Provider:      "openai",
@@ -83,7 +82,10 @@ func TestGenerateConfigTomlDoesNotSetServiceTier(t *testing.T) {
 				ContextWindow: 200000,
 			},
 		},
-	})
+	}
+	var output bytes.Buffer
+	err := codex.GenerateConfigToml(&output, "moonbridge", "http://127.0.0.1:38440/v1", "",
+		config.ProviderFromGlobalConfig(&cfg), config.ServerFromGlobalConfig(&cfg))
 	if err != nil {
 		t.Fatalf("GenerateConfigToml() error = %v", err)
 	}
@@ -107,12 +109,14 @@ func TestGenerateConfigTomlDoesNotSetServiceTier(t *testing.T) {
 }
 
 func TestGenerateConfigTomlIncludesDeepWikiMCPServer(t *testing.T) {
-	var output bytes.Buffer
-	err := codex.GenerateConfigToml(&output, "test", "http://127.0.0.1:38440/v1", "", config.Config{
+	cfg := config.Config{
 		Routes: map[string]config.RouteEntry{
 			"test": {Provider: "openai", Model: "gpt-4o"},
 		},
-	})
+	}
+	var output bytes.Buffer
+	err := codex.GenerateConfigToml(&output, "test", "http://127.0.0.1:38440/v1", "",
+		config.ProviderFromGlobalConfig(&cfg), config.ServerFromGlobalConfig(&cfg))
 	if err != nil {
 		t.Fatalf("GenerateConfigToml() error = %v", err)
 	}
@@ -124,7 +128,7 @@ func TestGenerateConfigTomlIncludesDeepWikiMCPServer(t *testing.T) {
 
 
 func TestBuildModelInfosFromConfig_DeduplicatesSameModelAcrossProviders(t *testing.T) {
-	models := codex.BuildModelInfosFromConfig(config.Config{
+	cfg := config.Config{
 		ProviderDefs: map[string]config.ProviderDef{
 			"provider-a": {
 				Models: map[string]config.ModelMeta{
@@ -137,7 +141,8 @@ func TestBuildModelInfosFromConfig_DeduplicatesSameModelAcrossProviders(t *testi
 				},
 			},
 		},
-	})
+	}
+	models := codex.BuildModelInfosFromConfig(config.ProviderFromGlobalConfig(&cfg), config.PluginConfig{})
 	if len(models) != 1 {
 		t.Fatalf("expected 1 deduplicated model, got %d", len(models))
 	}
@@ -151,7 +156,7 @@ func TestBuildModelInfosFromConfig_DeduplicatesSameModelAcrossProviders(t *testi
 }
 
 func TestBuildModelInfosFromConfig_DifferentModelsEmittedSeparately(t *testing.T) {
-	models := codex.BuildModelInfosFromConfig(config.Config{
+	cfg := config.Config{
 		ProviderDefs: map[string]config.ProviderDef{
 			"provider-a": {
 				Models: map[string]config.ModelMeta{
@@ -164,7 +169,8 @@ func TestBuildModelInfosFromConfig_DifferentModelsEmittedSeparately(t *testing.T
 				},
 			},
 		},
-	})
+	}
+	models := codex.BuildModelInfosFromConfig(config.ProviderFromGlobalConfig(&cfg), config.PluginConfig{})
 	if len(models) != 2 {
 		t.Fatalf("expected 2 distinct models, got %d", len(models))
 	}
@@ -174,7 +180,7 @@ func TestBuildModelInfosFromConfig_DifferentModelsEmittedSeparately(t *testing.T
 }
 
 func TestBuildModelInfosFromConfig_MetadataMergeTakesMaxContextWindow(t *testing.T) {
-	models := codex.BuildModelInfosFromConfig(config.Config{
+	cfg := config.Config{
 		ProviderDefs: map[string]config.ProviderDef{
 			"provider-a": {
 				Models: map[string]config.ModelMeta{
@@ -187,7 +193,8 @@ func TestBuildModelInfosFromConfig_MetadataMergeTakesMaxContextWindow(t *testing
 				},
 			},
 		},
-	})
+	}
+	models := codex.BuildModelInfosFromConfig(config.ProviderFromGlobalConfig(&cfg), config.PluginConfig{})
 	if len(models) != 1 {
 		t.Fatalf("expected 1 model, got %d", len(models))
 	}
@@ -197,7 +204,7 @@ func TestBuildModelInfosFromConfig_MetadataMergeTakesMaxContextWindow(t *testing
 }
 
 func TestBuildModelInfosFromConfig_MetadataMergeUnionModalities(t *testing.T) {
-	models := codex.BuildModelInfosFromConfig(config.Config{
+	cfg := config.Config{
 		ProviderDefs: map[string]config.ProviderDef{
 			"provider-a": {
 				Models: map[string]config.ModelMeta{
@@ -210,7 +217,8 @@ func TestBuildModelInfosFromConfig_MetadataMergeUnionModalities(t *testing.T) {
 				},
 			},
 		},
-	})
+	}
+	models := codex.BuildModelInfosFromConfig(config.ProviderFromGlobalConfig(&cfg), config.PluginConfig{})
 	if len(models) != 1 {
 		t.Fatalf("expected 1 model, got %d", len(models))
 	}
@@ -233,7 +241,7 @@ func TestBuildModelInfosFromConfig_MetadataMergeUnionModalities(t *testing.T) {
 }
 
 func TestBuildModelInfosFromConfig_ReasoningLevelsDeduplicatedByEffort(t *testing.T) {
-	models := codex.BuildModelInfosFromConfig(config.Config{
+	cfg := config.Config{
 		ProviderDefs: map[string]config.ProviderDef{
 			"provider-a": {
 				Models: map[string]config.ModelMeta{
@@ -256,7 +264,8 @@ func TestBuildModelInfosFromConfig_ReasoningLevelsDeduplicatedByEffort(t *testin
 				},
 			},
 		},
-	})
+	}
+	models := codex.BuildModelInfosFromConfig(config.ProviderFromGlobalConfig(&cfg), config.PluginConfig{})
 	if len(models) != 1 {
 		t.Fatalf("expected 1 model, got %d", len(models))
 	}
@@ -291,7 +300,8 @@ func TestGenerateConfigTomlNormalizesDirectProviderModelRef(t *testing.T) {
 		},
 	}
 	// No route for "deepseek/deepseek-v4-pro" — it is a direct provider/model reference.
-	err := codex.GenerateConfigToml(&output, "deepseek/deepseek-v4-pro", "http://127.0.0.1:38440/v1", "", cfg)
+	err := codex.GenerateConfigToml(&output, "deepseek/deepseek-v4-pro", "http://127.0.0.1:38440/v1", "",
+		config.ProviderFromGlobalConfig(&cfg), config.ServerFromGlobalConfig(&cfg))
 	if err != nil {
 		t.Fatalf("GenerateConfigToml() error = %v", err)
 	}
@@ -320,7 +330,8 @@ func TestGenerateConfigTomlModelProviderFormatInputStable(t *testing.T) {
 		},
 	}
 	// Input already in model(provider) format — should remain unchanged.
-	err := codex.GenerateConfigToml(&output, "deepseek-v4-pro(deepseek)", "http://127.0.0.1:38440/v1", "", cfg)
+	err := codex.GenerateConfigToml(&output, "deepseek-v4-pro(deepseek)", "http://127.0.0.1:38440/v1", "",
+		config.ProviderFromGlobalConfig(&cfg), config.ServerFromGlobalConfig(&cfg))
 	if err != nil {
 		t.Fatalf("GenerateConfigToml() error = %v", err)
 	}
@@ -347,7 +358,8 @@ func TestGenerateConfigTomlRouteAliasWithSlashNotNormalized(t *testing.T) {
 		},
 	}
 	// p1/model-a is an explicit route alias — should NOT be normalized.
-	err := codex.GenerateConfigToml(&output, "p1/model-a", "http://127.0.0.1:38440/v1", "", cfg)
+	err := codex.GenerateConfigToml(&output, "p1/model-a", "http://127.0.0.1:38440/v1", "",
+		config.ProviderFromGlobalConfig(&cfg), config.ServerFromGlobalConfig(&cfg))
 	if err != nil {
 		t.Fatalf("GenerateConfigToml() error = %v", err)
 	}
@@ -371,7 +383,8 @@ func TestGenerateConfigTomlCodexHomeContainsNormalizedSlug(t *testing.T) {
 			},
 		},
 	}
-	err := codex.GenerateConfigToml(&output, "deepseek/deepseek-v4-pro", "http://127.0.0.1:38440/v1", codexHome, cfg)
+	err := codex.GenerateConfigToml(&output, "deepseek/deepseek-v4-pro", "http://127.0.0.1:38440/v1", codexHome,
+		config.ProviderFromGlobalConfig(&cfg), config.ServerFromGlobalConfig(&cfg))
 	if err != nil {
 		t.Fatalf("GenerateConfigToml() error = %v", err)
 	}
@@ -406,7 +419,7 @@ func TestWriteModelsCatalogProducesValidJSON(t *testing.T) {
 			},
 		},
 	}
-	if err := codex.WriteModelsCatalog(path, cfg); err != nil {
+	if err := codex.WriteModelsCatalog(path, config.ProviderFromGlobalConfig(&cfg), config.PluginConfig{}); err != nil {
 		t.Fatalf("WriteModelsCatalog() error = %v", err)
 	}
 

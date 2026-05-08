@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"moonbridge/internal/extension/plugin"
-	"moonbridge/internal/foundation/config"
+	"moonbridge/internal/config"
 	"moonbridge/internal/protocol/anthropic"
-	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/format"
 	"moonbridge/internal/protocol/openai"
 )
 
@@ -36,7 +36,7 @@ type EnabledFunc func(modelAlias string) bool
 type DSPlugin struct {
 	plugin.BasePlugin
 	isEnabled EnabledFunc
-	appCfg    config.Config
+	pluginCfg config.PluginConfig
 	logger    *slog.Logger
 	cfg       *Config
 }
@@ -56,10 +56,13 @@ func (p *DSPlugin) EnabledForModel(model string) bool {
 	if p.isEnabled != nil {
 		return p.isEnabled(model)
 	}
-	return p.appCfg.ExtensionEnabled(PluginName, model)
+	if setting, ok := p.pluginCfg.Extensions[PluginName]; ok && setting.Enabled != nil {
+		return *setting.Enabled
+	}
+	return false
 }
 func (p *DSPlugin) Init(ctx plugin.PluginContext) error {
-	p.appCfg = ctx.AppConfig
+	p.pluginCfg = config.PluginFromGlobalConfig(&ctx.AppConfig)
 	p.logger = ctx.Logger
 	p.cfg = plugin.Config[Config](ctx)
 	return nil
@@ -154,7 +157,7 @@ func (p *DSPlugin) PrependThinkingForToolUse(messages []format.CoreMessage, tool
 	// Convert to anthropic format for state operations, then back
 	anthroMsgs := coreMessagesToAnthropic(messages)
 	if block, ok := p.thinkingBlockFromSummary(pendingSummary); ok {
-		PrependThinkingBlockForToolUse(&anthroMsgs, block)
+		PrependThinkingBlockForToolUse(&anthroMsgs, anthropicBlockToCore(block))
 		return anthropicToCoreMessages(anthroMsgs)
 	}
 	state, _ := sessionState.(*State)
@@ -169,20 +172,20 @@ func (p *DSPlugin) PrependThinkingForToolUse(messages []format.CoreMessage, tool
 
 func (p *DSPlugin) PrependThinkingForAssistant(blocks []format.CoreContentBlock, pendingSummary []openai.ReasoningItemSummary, sessionState any) []format.CoreContentBlock {
 	// Convert to anthropic format for state operations, then back
-	anthroBlocks := coreBlocksToAnthropic(blocks)
+	coreBlocks := blocks
 	if block, ok := p.thinkingBlockFromSummary(pendingSummary); ok {
-		anthroBlocks, _ = PrependThinkingBlockForAssistantText(anthroBlocks, block)
-		return anthropicBlocksToCore(anthroBlocks)
+		coreBlocks, _ = PrependThinkingBlockForAssistantText(coreBlocks, anthropicBlockToCore(block))
+		return coreBlocks
 	}
 	state, _ := sessionState.(*State)
 	if state != nil {
-		anthroBlocks = state.PrependCachedForAssistantText(anthroBlocks)
+		coreBlocks = state.PrependCachedForAssistantText(coreBlocks)
 	}
-	anthroBlocks, inserted := PrependRequiredThinkingForAssistantText(anthroBlocks)
+	coreBlocks, inserted := PrependRequiredThinkingForAssistantText(coreBlocks)
 	if inserted {
-		p.warnRequiredThinkingFallback("assistant_text", "content_blocks", len(anthroBlocks)-1)
+		p.warnRequiredThinkingFallback("assistant_text", "content_blocks", len(coreBlocks)-1)
 	}
-	return anthropicBlocksToCore(anthroBlocks)
+	return coreBlocks
 }
 
 func (p *DSPlugin) warnRequiredThinkingFallback(target string, attrs ...any) {
@@ -262,7 +265,7 @@ func (p *DSPlugin) RememberContent(ctx *plugin.RequestContext, content []format.
 			})
 		}
 	}
-	state.RememberFromContent(anthropicBlocks)
+	state.RememberFromContent(anthropicBlocksToCore(anthropicBlocks))
 }
 
 // RememberCoreContent is the Core format equivalent of RememberContent.
@@ -328,8 +331,8 @@ func (p *DSPlugin) OnStreamEvent(ctx *plugin.StreamContext, event plugin.StreamE
 		}
 		// Track tool_use block IDs so they can be matched to thinking blocks
 		// during RememberStreamResult.
-		if event.Block != nil && event.Block.Type == "tool_use" && event.Block.ID != "" {
-			ss.RecordToolCall(event.Block.ID)
+			if event.Block != nil && event.Block.Type == "tool_use" && event.Block.ToolUseID != "" {
+				ss.RecordToolCall(event.Block.ToolUseID)
 		}
 	case "block_delta":
 		if ss.Delta(event.Index, event.Delta) {
@@ -373,13 +376,10 @@ func (p *DSPlugin) MutateCoreRequest(ctx context.Context, req *format.CoreReques
 
 	// Read thinking budget from extension config, default to 4096.
 	budgetTokens := 4096
-	if req.Model != "" {
-		raw := p.appCfg.ExtensionRawConfig(PluginName, req.Model)
-		if raw != nil {
-			if v, ok := raw["thinking_budget_tokens"]; ok {
-				if n, ok := v.(float64); ok {
-					budgetTokens = int(n)
-				}
+	if setting, ok := p.pluginCfg.Extensions[PluginName]; ok && setting.RawConfig != nil {
+		if v, ok := setting.RawConfig["thinking_budget_tokens"]; ok {
+			if n, ok := v.(float64); ok {
+				budgetTokens = int(n)
 			}
 		}
 	}
@@ -407,7 +407,7 @@ func (p *DSPlugin) ExtractThinkingBlock(_ *plugin.RequestContext, summary []open
 			continue
 		}
 		if block, ok := DecodeThinkingSummary(item.Text); ok {
-			return anthropicBlockToCore(block), true
+			return block, true
 		}
 	}
 	return format.CoreContentBlock{}, false

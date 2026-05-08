@@ -9,7 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"moonbridge/internal/foundation/config"
+	"moonbridge/internal/config"
 	"moonbridge/internal/service/provider"
 	"moonbridge/internal/service/stats"
 )
@@ -65,8 +65,9 @@ func (rt *Runtime) Reload(cfg config.Config) error {
 	}
 
 	// Build provider definitions and routes.
-	providerDefs := provider.BuildProviderDefsFromConfig(cfg)
-	modelRoutes := provider.BuildModelRoutesFromConfig(cfg)
+	providerCfg := config.ProviderFromGlobalConfig(&cfg)
+	providerDefs := provider.BuildProviderDefsFromConfig(providerCfg)
+	modelRoutes := provider.BuildModelRoutesFromConfig(providerCfg)
 
 	// Build new provider manager.
 	providerMgr, err := provider.NewProviderManager(providerDefs, modelRoutes)
@@ -75,7 +76,7 @@ func (rt *Runtime) Reload(cfg config.Config) error {
 	}
 
 	// Compute pricing from the new config.
-	pricing := provider.BuildPricingFromConfig(cfg)
+	pricing := provider.BuildPricingFromConfig(providerCfg)
 
 	// Create and atomically store the new snapshot.
 	snapshot := &ConfigSnapshot{

@@ -3,7 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
-	"moonbridge/internal/foundation/modelref"
+	"moonbridge/internal/modelref"
 	"strings"
 )
 

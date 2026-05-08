@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/format"
 	pluginpkg "moonbridge/internal/extension/plugin"
 	"moonbridge/internal/protocol/openai"
 	"moonbridge/internal/protocol/anthropic"
@@ -105,7 +105,7 @@ func TestToAnthropicRequestIgnoresUnsupportedReasoningEffort(t *testing.T) {
 }
 
 func TestEncodeDecodeThinkingSummaryPreservesSignatureOnlyBlock(t *testing.T) {
-	encoded := EncodeThinkingSummary(anthropic.ContentBlock{Type: "thinking", Signature: "sig_only"})
+	encoded := EncodeThinkingSummary(format.CoreContentBlock{Type: "reasoning", ReasoningSignature: "sig_only"})
 	if encoded == "" {
 		t.Fatal("encoded summary is empty")
 	}
@@ -113,7 +113,7 @@ func TestEncodeDecodeThinkingSummaryPreservesSignatureOnlyBlock(t *testing.T) {
 	if !ok {
 		t.Fatal("expected encoded summary to decode")
 	}
-	if decoded.Type != "thinking" || decoded.Thinking != "" || decoded.Signature != "sig_only" {
+	if decoded.Type != "reasoning" || decoded.ReasoningText != "" || decoded.ReasoningSignature != "sig_only" {
 		t.Fatalf("decoded block = %+v", decoded)
 	}
 }
@@ -144,8 +144,8 @@ func TestPrependThinkingWarnsWhenUsingRequiredFallback(t *testing.T) {
 
 	logs.Reset()
 	summary := []openai.ReasoningItemSummary{{
-		Type: "summary_text",
-		Text: EncodeThinkingSummary(anthropic.ContentBlock{Type: "thinking", Signature: "sig_summary"}),
+			Type: "summary_text",
+			Text: EncodeThinkingSummary(format.CoreContentBlock{Type: "reasoning", ReasoningSignature: "sig_summary"}),
 	}}
 	got = p.PrependThinkingForToolUse([]format.CoreMessage{{
 		Role:    "assistant",
@@ -161,7 +161,7 @@ func TestPrependThinkingWarnsWhenUsingRequiredFallback(t *testing.T) {
 
 	logs.Reset()
 	state := NewState()
-	state.RememberForToolCalls([]string{"call_cached"}, anthropic.ContentBlock{Type: "thinking", Signature: "sig_cached"})
+	state.RememberForToolCalls([]string{"call_cached"}, format.CoreContentBlock{Type: "reasoning", ReasoningSignature: "sig_cached"})
 	got = p.PrependThinkingForToolUse([]format.CoreMessage{{
 		Role:    "assistant",
 		Content: []format.CoreContentBlock{{Type: "tool_use", ToolUseID: "call_cached"}},

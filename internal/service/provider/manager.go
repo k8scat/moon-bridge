@@ -10,8 +10,8 @@ import (
 	"sort"
 	"time"
 
-	"moonbridge/internal/foundation/config"
-	"moonbridge/internal/foundation/modelref"
+	"moonbridge/internal/config"
+	"moonbridge/internal/modelref"
 	"moonbridge/internal/protocol/anthropic"
 )
 
@@ -51,18 +51,13 @@ type ModelRoute struct {
 	Name     string `yaml:"name"`     // upstream model name
 }
 
-// ProviderClient wraps an anthropic.Client (or equivalent) with its key.
-type ProviderClient struct {
-	Client   *anthropic.Client
-	Provider string // provider key
-}
 
 // ProviderCandidate represents a candidate provider for a resolved model.
 type ProviderCandidate struct {
 	ProviderKey   string
 	UpstreamModel string
 	Protocol      string // "anthropic" | "openai-response"
-	Client        *anthropic.Client
+	Client ProviderClient
 }
 
 // ResolvedRoute contains the result of model resolution.
@@ -80,9 +75,57 @@ func (r *ResolvedRoute) Preferred() (ProviderCandidate, bool) {
 
 // ProviderManager manages multiple upstream provider clients and routes
 // model aliases to the appropriate provider.
+
+// anthropicClientAdapter wraps an *anthropic.Client to implement ProviderClient.
+type anthropicClientAdapter struct {
+	client *anthropic.Client
+}
+
+func (a *anthropicClientAdapter) CreateMessage(ctx context.Context, req any) (any, error) {
+	msgReq, ok := req.(anthropic.MessageRequest)
+	if !ok {
+		return nil, fmt.Errorf("expected anthropic.MessageRequest, got %T", req)
+	}
+	return a.client.CreateMessage(ctx, msgReq)
+}
+
+func (a *anthropicClientAdapter) StreamMessage(ctx context.Context, req any) (<-chan any, error) {
+	msgReq, ok := req.(anthropic.MessageRequest)
+	if !ok {
+		return nil, fmt.Errorf("expected anthropic.MessageRequest, got %T", req)
+	}
+	stream, err := a.client.StreamMessage(ctx, msgReq)
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan any)
+	go func() {
+		defer close(out)
+		for {
+			evt, err := stream.Next()
+			if err != nil {
+				return
+			}
+			out <- evt
+		}
+	}()
+	return out, nil
+}
+
+func (a *anthropicClientAdapter) AnthropicClient() *anthropic.Client {
+	return a.client
+}
+
+// NewAnthropicClientAdapter wraps an *anthropic.Client to satisfy ProviderClient.
+func NewAnthropicClientAdapter(client *anthropic.Client) ProviderClient {
+	return &anthropicClientAdapter{client: client}
+}
+
+
+
 type ProviderManager struct {
 	mu        sync.Mutex               // guards field replacement during Reload
-	clients    map[string]*anthropic.Client // provider key -> anthropic.Client
+	clients    map[string]ProviderClient
 	providers  map[string]ProviderConfig    // provider key -> config (for inspection)
 	routes     map[string]ModelRoute        // model alias -> route
 	defaultK   string                       // default provider key
@@ -95,7 +138,7 @@ type ProviderManager struct {
 // routes: model alias -> ModelRoute
 func NewProviderManager(providerCfgs map[string]ProviderConfig, routes map[string]ModelRoute) (*ProviderManager, error) {
 	pm := &ProviderManager{
-		clients:    make(map[string]*anthropic.Client, len(providerCfgs)),
+		clients:    make(map[string]ProviderClient, len(providerCfgs)),
 		providers:  providerCfgs,
 		routes:     routes,
 		resolvedWS: make(map[string]string, len(providerCfgs)),
@@ -107,13 +150,13 @@ func NewProviderManager(providerCfgs map[string]ProviderConfig, routes map[strin
 			return nil, fmt.Errorf("provider %q: base_url is required", key)
 		}
 		httpClient := newHTTPClient(cfg.HTTP)
-		pm.clients[key] = anthropic.NewClient(anthropic.ClientConfig{
+		pm.clients[key] = &anthropicClientAdapter{client: anthropic.NewClient(anthropic.ClientConfig{
 			BaseURL:   cfg.BaseURL,
 			APIKey:    cfg.APIKey,
 			Version:   cfg.Version,
 			UserAgent: cfg.UserAgent,
 			Client:    httpClient,
-		})
+		})}
 	}
 
 	// Pick the default key.
@@ -166,10 +209,10 @@ func NewProviderManager(providerCfgs map[string]ProviderConfig, routes map[strin
 // Reload atomically replaces the internal state by building a new
 // ProviderManager from the given config. If building fails, the
 // existing state is preserved and an error is returned.
-func (pm *ProviderManager) Reload(cfg config.Config) error {
+func (pm *ProviderManager) Reload(cfg config.ProviderConfig) error {
 	// Convert config.ProviderDefs to provider.ProviderConfig map.
-	providerDefs := make(map[string]ProviderConfig, len(cfg.ProviderDefs))
-	for key, def := range cfg.ProviderDefs {
+	providerDefs := make(map[string]ProviderConfig, len(cfg.Providers))
+	for key, def := range cfg.Providers {
 		modelNames := make([]string, 0, len(def.Models))
 		for name := range def.Models {
 			modelNames = append(modelNames, name)
@@ -220,7 +263,7 @@ func (pm *ProviderManager) Reload(cfg config.Config) error {
 
 // ClientFor returns the anthropic.Client and upstream model name for a given model alias.
 // It returns the default provider if the alias is not explicitly routed.
-func (pm *ProviderManager) ClientFor(modelAlias string) (string, *anthropic.Client, error) {
+func (pm *ProviderManager) ClientFor(modelAlias string) (string, ProviderClient, error) {
 	// Direct provider/model reference.
 	if provider, upstream := ParseModelRef(modelAlias); provider != "" {
 		if client, ok := pm.clients[provider]; ok {
@@ -334,7 +377,11 @@ func (pm *ProviderManager) ProbeWebSearch(ctx context.Context, modelAlias string
 	if err != nil {
 		return false, err
 	}
-	return client.ProbeWebSearch(ctx, upstreamModel)
+	accessor, ok := client.(AnthropicClientAccessor)
+	if !ok {
+		return false, fmt.Errorf("provider client for %q does not support web search probing", modelAlias)
+	}
+	return accessor.AnthropicClient().ProbeWebSearch(ctx, upstreamModel)
 }
 
 // ProviderKeys returns all configured provider keys.
@@ -385,7 +432,7 @@ func valueOrDefault(value, fallback string) string {
 }
 
 // ClientForKey returns the anthropic.Client for a given provider key.
-func (pm *ProviderManager) ClientForKey(key string) (*anthropic.Client, error) {
+func (pm *ProviderManager) ClientForKey(key string) (ProviderClient, error) {
 	client, ok := pm.clients[key]
 	if !ok {
 		return nil, fmt.Errorf("provider %q not found", key)

@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"moonbridge/internal/protocol/anthropic"
-	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/format"
 	"moonbridge/internal/protocol/openai"
 )
 

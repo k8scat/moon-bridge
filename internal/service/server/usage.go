@@ -6,12 +6,12 @@ import (
 	"strings"
 
 	"moonbridge/internal/extension/plugin"
+	"moonbridge/internal/format"
 	"moonbridge/internal/protocol/openai"
-	"moonbridge/internal/protocol/anthropic"
 	"moonbridge/internal/service/stats"
 )
 
-func usageFromAnthropic(protocol string, source string, usage anthropic.Usage, inputIncludesCache bool) plugin.RequestUsage {
+func usageFromAnthropic(protocol string, source string, usage format.CoreUsage, inputIncludesCache bool) plugin.RequestUsage {
 	raw := mustMarshalJSON(usage)
 	normalizedInputTokens := anthropicNormalizedInputTokens(usage, inputIncludesCache)
 	return plugin.RequestUsage{
@@ -20,57 +20,38 @@ func usageFromAnthropic(protocol string, source string, usage anthropic.Usage, i
 
 		RawInputTokens:   usage.InputTokens,
 		RawOutputTokens:  usage.OutputTokens,
-		RawCacheCreation: usage.CacheCreationInputTokens,
-		RawCacheRead:     usage.CacheReadInputTokens,
+		RawCacheCreation: 0,
+		RawCacheRead:     usage.CachedInputTokens,
 
 		NormalizedInputTokens:   normalizedInputTokens,
 		NormalizedOutputTokens:  usage.OutputTokens,
-		NormalizedCacheCreation: usage.CacheCreationInputTokens,
-		NormalizedCacheRead:     usage.CacheReadInputTokens,
+		NormalizedCacheCreation: 0,
+		NormalizedCacheRead:     usage.CachedInputTokens,
 
 		RawUsageJSON: raw,
 	}
 }
-func anthropicUsageFromStreamEvents(events []anthropic.StreamEvent) (anthropic.Usage, stats.BillingUsage, bool) {
-	var usage anthropic.Usage
+
+func anthropicUsageFromStreamEvents(events []format.CoreStreamEvent) (format.CoreUsage, stats.BillingUsage, bool) {
+	var usage format.CoreUsage
 	var billing stats.BillingUsage
 	inputIncludesCache := false
 	for _, ev := range events {
-		switch {
-		case ev.Type == "message_start" && ev.Message != nil:
-			if ev.Message.Usage.InputTokens > 0 {
-				billing.FreshInputTokens = ev.Message.Usage.InputTokens
-				billing.ProviderInputTokens = ev.Message.Usage.InputTokens
-			}
-			if ev.Message.Usage.OutputTokens > 0 {
-				billing.OutputTokens = ev.Message.Usage.OutputTokens
-			}
-			if ev.Message.Usage.CacheCreationInputTokens > 0 {
-				billing.CacheCreationInputTokens = ev.Message.Usage.CacheCreationInputTokens
-			}
-			if ev.Message.Usage.CacheReadInputTokens > 0 {
-				billing.CacheReadInputTokens = ev.Message.Usage.CacheReadInputTokens
-			}
-			usage = mergeAnthropicUsage(usage, ev.Message.Usage)
-		case ev.Type == "message_delta" && ev.Usage != nil:
-			if streamInputIncludesCache(usage, *ev.Usage) {
-				inputIncludesCache = true
-				billing.FreshInputTokens = ev.Usage.InputTokens
-				billing.ProviderInputTokens = usage.InputTokens
-			} else if ev.Usage.InputTokens > 0 {
+		if ev.Usage == nil {
+			continue
+		}
+		if ev.Type == format.CoreEventInProgress || ev.Type == format.CoreEventCompleted {
+			if ev.Usage.InputTokens > 0 {
 				billing.FreshInputTokens = ev.Usage.InputTokens
 				billing.ProviderInputTokens = ev.Usage.InputTokens
 			}
 			if ev.Usage.OutputTokens > 0 {
 				billing.OutputTokens = ev.Usage.OutputTokens
 			}
-			if ev.Usage.CacheCreationInputTokens > 0 {
-				billing.CacheCreationInputTokens = ev.Usage.CacheCreationInputTokens
+			if ev.Usage.CachedInputTokens > 0 {
+				billing.CacheReadInputTokens = ev.Usage.CachedInputTokens
 			}
-			if ev.Usage.CacheReadInputTokens > 0 {
-				billing.CacheReadInputTokens = ev.Usage.CacheReadInputTokens
-			}
-			usage = mergeAnthropicUsage(usage, *ev.Usage)
+			usage = mergeCoreUsage(usage, *ev.Usage)
 		}
 	}
 	if billing.ProviderInputTokens == 0 {
@@ -78,56 +59,46 @@ func anthropicUsageFromStreamEvents(events []anthropic.StreamEvent) (anthropic.U
 	}
 	return usage, billing, inputIncludesCache
 }
-func mergeAnthropicUsage(current anthropic.Usage, updated anthropic.Usage) anthropic.Usage {
+
+func mergeCoreUsage(current format.CoreUsage, updated format.CoreUsage) format.CoreUsage {
 	if updated.InputTokens > 0 {
-		if streamInputIncludesCache(current, updated) {
-			// Some providers put total input on message_start, then fresh/cache
-			// split on message_delta. Keep the total input while merging cache fields.
-		} else {
-			current.InputTokens = updated.InputTokens
-		}
+		current.InputTokens = updated.InputTokens
 	}
 	if updated.OutputTokens > 0 {
 		current.OutputTokens = updated.OutputTokens
 	}
-	if updated.CacheCreationInputTokens > 0 {
-		current.CacheCreationInputTokens = updated.CacheCreationInputTokens
-	}
-	if updated.CacheReadInputTokens > 0 {
-		current.CacheReadInputTokens = updated.CacheReadInputTokens
+	if updated.CachedInputTokens > 0 {
+		current.CachedInputTokens = updated.CachedInputTokens
 	}
 	return current
 }
-func streamInputIncludesCache(current anthropic.Usage, updated anthropic.Usage) bool {
-	return updated.InputTokens > 0 &&
-		current.InputTokens > updated.InputTokens &&
-		current.CacheCreationInputTokens == 0 &&
-		current.CacheReadInputTokens == 0 &&
-		(updated.CacheCreationInputTokens > 0 || updated.CacheReadInputTokens > 0)
-}
-func statsUsageFromAnthropic(usage anthropic.Usage, inputIncludesCache bool) stats.Usage {
+
+func statsUsageFromAnthropic(usage format.CoreUsage, inputIncludesCache bool) stats.Usage {
 	return stats.Usage{
 		InputTokens:              anthropicNormalizedInputTokens(usage, inputIncludesCache),
 		OutputTokens:             usage.OutputTokens,
-		CacheCreationInputTokens: usage.CacheCreationInputTokens,
-		CacheReadInputTokens:     usage.CacheReadInputTokens,
+		CacheCreationInputTokens: 0,
+		CacheReadInputTokens:     usage.CachedInputTokens,
 	}
 }
-func billingUsageFromAnthropic(usage anthropic.Usage) stats.BillingUsage {
+
+func billingUsageFromAnthropic(usage format.CoreUsage) stats.BillingUsage {
 	return stats.BillingUsage{
 		FreshInputTokens:         usage.InputTokens,
 		OutputTokens:             usage.OutputTokens,
-		CacheCreationInputTokens: usage.CacheCreationInputTokens,
-		CacheReadInputTokens:     usage.CacheReadInputTokens,
-		ProviderInputTokens:      usage.InputTokens + usage.CacheCreationInputTokens + usage.CacheReadInputTokens,
+		CacheCreationInputTokens: 0,
+		CacheReadInputTokens:     usage.CachedInputTokens,
+		ProviderInputTokens:      usage.InputTokens + usage.CachedInputTokens,
 	}
 }
-func anthropicNormalizedInputTokens(usage anthropic.Usage, inputIncludesCache bool) int {
+
+func anthropicNormalizedInputTokens(usage format.CoreUsage, inputIncludesCache bool) int {
 	if inputIncludesCache {
 		return usage.InputTokens
 	}
-	return usage.InputTokens + usage.CacheCreationInputTokens + usage.CacheReadInputTokens
+	return usage.InputTokens + usage.CachedInputTokens
 }
+
 func usageFromStats(protocol string, source string, usage stats.Usage, rawUsage openai.Usage) plugin.RequestUsage {
 	return plugin.RequestUsage{
 		Protocol:    protocol,
@@ -146,9 +117,11 @@ func usageFromStats(protocol string, source string, usage stats.Usage, rawUsage 
 		RawUsageJSON: mustMarshalJSON(rawUsage),
 	}
 }
+
 func zeroUsage(protocol string, source string) plugin.RequestUsage {
 	return plugin.RequestUsage{Protocol: protocol, UsageSource: source}
 }
+
 func mustMarshalJSON(value any) json.RawMessage {
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -156,9 +129,11 @@ func mustMarshalJSON(value any) json.RawMessage {
 	}
 	return data
 }
+
 func logUsageLine(requestModel, actualModel string, usage stats.Usage, sessionStats *stats.SessionStats) {
 	logBillingUsageLine(requestModel, actualModel, usage.BillingUsage(), sessionStats)
 }
+
 func logBillingUsageLine(requestModel, actualModel string, usage stats.BillingUsage, sessionStats *stats.SessionStats) {
 	var requestCost float64
 	var summary stats.Summary
@@ -181,6 +156,7 @@ func logBillingUsageLine(requestModel, actualModel string, usage stats.BillingUs
 		"cache_rw_ratio", rwRatio,
 	)
 }
+
 func openAIUsageFromResponse(data []byte, stream bool) (stats.Usage, openai.Usage, string, bool) {
 	if len(data) == 0 {
 		return stats.Usage{}, openai.Usage{}, "", false
@@ -197,6 +173,7 @@ func openAIUsageFromResponse(data []byte, stream bool) (stats.Usage, openai.Usag
 	usage, ok := statsUsageFromOpenAIUsage(payload.Usage)
 	return usage, payload.Usage, "openai_response", ok
 }
+
 func openAIUsageFromSSE(data []byte) (stats.Usage, openai.Usage, string, bool) {
 	var last stats.Usage
 	var lastRaw openai.Usage
@@ -242,6 +219,7 @@ func openAIUsageFromSSE(data []byte) (stats.Usage, openai.Usage, string, bool) {
 	}
 	return last, lastRaw, "openai_sse", found
 }
+
 func statsUsageFromOpenAIUsage(usage openai.Usage) (stats.Usage, bool) {
 	if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.InputTokensDetails.CachedTokens == 0 {
 		return stats.Usage{}, false

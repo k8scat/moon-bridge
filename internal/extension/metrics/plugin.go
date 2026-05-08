@@ -24,8 +24,8 @@ import (
 	"time"
 
 	"moonbridge/internal/extension/plugin"
-	"moonbridge/internal/foundation/config"
-	"moonbridge/internal/foundation/db"
+	"moonbridge/internal/config"
+	"moonbridge/internal/db"
 )
 
 const PluginName = "metrics"
@@ -41,7 +41,7 @@ type Plugin struct {
 	plugin.BasePlugin
 
 	metricsStore        *Store
-	appCfg              config.Config
+	pluginCfg           config.PluginConfig
 	logger              *slog.Logger
 	persistenceDisabled bool
 }
@@ -66,7 +66,7 @@ func ConfigSpecs() []config.ExtensionConfigSpec {
 }
 
 func (p *Plugin) Init(ctx plugin.PluginContext) error {
-	p.appCfg = ctx.AppConfig
+	p.pluginCfg = config.PluginFromGlobalConfig(&ctx.AppConfig)
 	p.logger = ctx.Logger
 	return nil
 }
@@ -74,7 +74,7 @@ func (p *Plugin) Init(ctx plugin.PluginContext) error {
 func (p *Plugin) Shutdown() error { return nil }
 
 func (p *Plugin) EnabledForModel(string) bool {
-	if !p.appCfg.ExtensionEnabled(PluginName, "") {
+	if !pluginExtensionEnabled(p.pluginCfg, PluginName) {
 		return false
 	}
 	return !p.persistenceDisabled
@@ -83,7 +83,7 @@ func (p *Plugin) EnabledForModel(string) bool {
 // --- DBConsumer ---
 
 func (p *Plugin) DBConsumer() db.Consumer {
-	if !p.appCfg.ExtensionEnabled(PluginName, "") {
+	if !pluginExtensionEnabled(p.pluginCfg, PluginName) {
 		return nil
 	}
 	return p
@@ -160,7 +160,14 @@ func (p *Plugin) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := plugin.Config[Config](plugin.PluginContext{Config: p.appCfg.ExtensionConfig(PluginName, "")})
+	// Decode typed config from PluginConfig directly.
+	var cfg *Config
+	if setting, ok := p.pluginCfg.Extensions[PluginName]; ok && len(setting.RawConfig) > 0 {
+		data, err := json.Marshal(setting.RawConfig)
+		if err == nil {
+			_ = json.Unmarshal(data, &cfg)
+		}
+	}
 	defaultLimit := 100
 	maxLimit := 1000
 	if cfg != nil {
@@ -218,6 +225,13 @@ func (p *Plugin) handleQuery(w http.ResponseWriter, r *http.Request) {
 		"records": records,
 		"count":   len(records),
 	})
+}
+
+func pluginExtensionEnabled(pluginCfg config.PluginConfig, name string) bool {
+	if setting, ok := pluginCfg.Extensions[name]; ok && setting.Enabled != nil {
+		return *setting.Enabled
+	}
+	return false
 }
 
 var (

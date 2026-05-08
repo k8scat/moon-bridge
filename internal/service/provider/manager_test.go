@@ -3,7 +3,7 @@ package provider
 import (
 	"testing"
 
-	"moonbridge/internal/foundation/config"
+	"moonbridge/internal/config"
 )
 
 func TestProviderManagerRoutesProtocolAndUpstreamModel(t *testing.T) {
@@ -360,8 +360,8 @@ func TestReloadAfterInitialCreation(t *testing.T) {
 	}
 
 	// Reload with new config.
-	newCfg := config.Config{
-		ProviderDefs: map[string]config.ProviderDef{
+	newCfg := config.ProviderConfig{
+		Providers: map[string]config.ProviderDef{
 			"default": {
 				BaseURL: "https://reloaded.test",
 				APIKey:  "key-reloaded",
@@ -420,8 +420,8 @@ func TestReloadFailurePreservesOldState(t *testing.T) {
 	}
 
 	// Reload with invalid config (empty provider defs with no models/routes = invalid).
-	badCfg := config.Config{
-		ProviderDefs: map[string]config.ProviderDef{
+	badCfg := config.ProviderConfig{
+		Providers: map[string]config.ProviderDef{
 			"": {BaseURL: "", APIKey: ""}, // invalid key
 		},
 	}
@@ -461,8 +461,8 @@ func TestReloadResolvedWebSearch(t *testing.T) {
 	}
 
 	// Reload — resolved web search should be empty again (new manager).
-	reloadCfg := config.Config{
-		ProviderDefs: map[string]config.ProviderDef{
+	reloadCfg := config.ProviderConfig{
+		Providers: map[string]config.ProviderDef{
 			"default": {
 				BaseURL: "https://reloaded.test",
 				APIKey:  "key-reloaded",

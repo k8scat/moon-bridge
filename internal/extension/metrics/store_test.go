@@ -7,7 +7,7 @@ import (
 	"time"
 
 	mbtrics "moonbridge/internal/extension/metrics"
-	"moonbridge/internal/foundation/db"
+	"moonbridge/internal/db"
 
 	_ "modernc.org/sqlite"
 )

@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"moonbridge/internal/foundation/config"
+	"moonbridge/internal/config"
 	"moonbridge/internal/service/provider"
 	"moonbridge/internal/service/server"
 )

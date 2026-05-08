@@ -13,7 +13,7 @@ import (
 	"testing"
 
 	"moonbridge/internal/protocol/chat"
-	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/format"
 	"moonbridge/internal/protocol/openai"
 )
 

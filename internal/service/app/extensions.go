@@ -10,7 +10,7 @@ import (
 	mbtrics "moonbridge/internal/extension/metrics"
 	"moonbridge/internal/extension/plugin"
 	"moonbridge/internal/extension/visual"
-	"moonbridge/internal/foundation/config"
+	"moonbridge/internal/config"
 )
 
 // ExtensionOptions controls optional initialization of built-in plugins.

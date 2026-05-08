@@ -10,10 +10,10 @@ import (
 
 	deepseekv4 "moonbridge/internal/extension/deepseek_v4"
 	"moonbridge/internal/extension/plugin"
-	"moonbridge/internal/foundation/config"
-	"moonbridge/internal/foundation/session"
+	"moonbridge/internal/config"
+	"moonbridge/internal/session"
 	"moonbridge/internal/protocol/anthropic"
-	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/format"
 	openai "moonbridge/internal/protocol/openai"
 	"moonbridge/internal/protocol/chat"
 	"moonbridge/internal/protocol/google"
@@ -215,7 +215,7 @@ func (s *Server) handleWithAdapters(
 		}
 
 		// Non-streaming upstream call.
-		effectiveProvider := s.resolveProvider(openAIReq.Model, route)
+		effectiveProvider := preferred.Client
 		if effectiveProvider == nil {
 			log.Error("adapter path: no upstream provider resolved")
 			payload := openai.ErrorResponse{
@@ -250,16 +250,9 @@ func (s *Server) handleWithAdapters(
 		// Anthropic response → CoreResponse.
 		coreResp, err = providerAdapter.ToCoreResponse(ctx, &upstreamResp)
 
-		// Remember response content for plugin state tracking (DeepSeek thinking replay).
-		if s.pluginRegistry != nil && len(upstreamResp.Content) > 0 {
-			s.pluginRegistry.RememberContent(
-				&plugin.RequestContext{
-					ModelAlias:  openAIReq.Model,
-					SessionData: sess.ExtensionData,
-				},
-				upstreamResp.Content,
-			)
-		}
+		// Remember response content for plugin state tracking (pending Plan 02).
+		// ProviderClient returns any; adapter converts via ToCoreResponse.
+		_ = sess
 
 	case config.ProtocolOpenAIChat:
 		chatReq, ok := upstreamAny.(*chat.ChatRequest)
@@ -289,7 +282,7 @@ func (s *Server) handleWithAdapters(
 			return
 		}
 
-		chatClient, ok := s.chatClients[preferred.ProviderKey]
+		chatClientRaw, ok := s.chatClients[preferred.ProviderKey]
 		if !ok {
 			log.Error("adapter path: no chat client for provider", "provider", preferred.ProviderKey)
 			payload := openai.ErrorResponse{
@@ -304,13 +297,27 @@ func (s *Server) handleWithAdapters(
 			writeOpenAIError(w, http.StatusBadGateway, payload)
 			return
 		}
+		chatClient, ok := chatClientRaw.(*chat.Client)
+		if !ok {
+			log.Error("adapter path: invalid chat client type", "provider", preferred.ProviderKey)
+			payload := openai.ErrorResponse{
+				Error: openai.ErrorObject{
+					Message: fmt.Sprintf("invalid chat client for provider %q", preferred.ProviderKey),
+					Type:    "server_error",
+					Code:    "internal_error",
+				},
+			}
+			record.Error = traceError("chat_client_type", fmt.Errorf("invalid chat client for %q", preferred.ProviderKey))
+			record.OpenAIResponse = payload
+			writeOpenAIError(w, http.StatusInternalServerError, payload)
+			return
+		}
 
 		record.ChatRequest = chatReq
 		var chatResp *chat.ChatResponse
 		if s.providerMgr != nil && s.providerMgr.ResolvedWebSearch(preferred.ProviderKey) == "injected" && hasWebSearchTool(openAIReq) {
-			cfg := s.currentConfig()
-			injectChatSearchTools(chatReq, cfg.FirecrawlAPIKey)
-			chatResp, err = s.executeChatSearchLoop(ctx, chatClient, chatReq, cfg.TavilyAPIKey, cfg.FirecrawlAPIKey, s.maxSearchRounds())
+			injectChatSearchTools(chatReq, s.runtime.Current().Config.FirecrawlAPIKey)
+			chatResp, err = s.executeChatSearchLoop(ctx, chatClient, chatReq, s.runtime.Current().Config.TavilyAPIKey, s.runtime.Current().Config.FirecrawlAPIKey, s.maxSearchRounds())
 		} else {
 			chatResp, err = chatClient.CreateChat(ctx, chatReq)
 		}
@@ -383,7 +390,7 @@ func (s *Server) handleWithAdapters(
 			return
 		}
 
-		googleClient, ok := s.googleClients[preferred.ProviderKey]
+		googleClientRaw, ok := s.googleClients[preferred.ProviderKey]
 		if !ok {
 			log.Error("adapter path: no google client for provider", "provider", preferred.ProviderKey)
 			payload := openai.ErrorResponse{
@@ -398,13 +405,27 @@ func (s *Server) handleWithAdapters(
 			writeOpenAIError(w, http.StatusBadGateway, payload)
 			return
 		}
+		googleClient, ok := googleClientRaw.(*google.Client)
+		if !ok {
+			log.Error("adapter path: invalid google client type", "provider", preferred.ProviderKey)
+			payload := openai.ErrorResponse{
+				Error: openai.ErrorObject{
+					Message: fmt.Sprintf("invalid google client for provider %q", preferred.ProviderKey),
+					Type:    "server_error",
+					Code:    "internal_error",
+				},
+			}
+			record.Error = traceError("google_client_type", fmt.Errorf("invalid google client for %q", preferred.ProviderKey))
+			record.OpenAIResponse = payload
+			writeOpenAIError(w, http.StatusInternalServerError, payload)
+			return
+		}
 
 		record.UpstreamRequest = googleReq
 		var googleResp *google.GenerateContentResponse
 		if s.providerMgr != nil && s.providerMgr.ResolvedWebSearch(preferred.ProviderKey) == "injected" && hasWebSearchTool(openAIReq) {
-			cfg := s.currentConfig()
-			injectGoogleSearchTools(googleReq, cfg.FirecrawlAPIKey)
-			googleResp, err = s.executeGoogleSearchLoop(ctx, googleClient, preferred.UpstreamModel, googleReq, cfg.TavilyAPIKey, cfg.FirecrawlAPIKey, s.maxSearchRounds())
+			injectGoogleSearchTools(googleReq, s.runtime.Current().Config.FirecrawlAPIKey)
+			googleResp, err = s.executeGoogleSearchLoop(ctx, googleClient, preferred.UpstreamModel, googleReq, s.runtime.Current().Config.TavilyAPIKey, s.runtime.Current().Config.FirecrawlAPIKey, s.maxSearchRounds())
 		} else {
 			googleResp, err = googleClient.GenerateContent(ctx, preferred.UpstreamModel, googleReq)
 		}
@@ -517,11 +538,10 @@ func (s *Server) handleWithAdapters(
 	if s.pluginRegistry != nil {
 		usage := zeroUsage(string(config.ProtocolAnthropic), "anthropic_response")
 		if coreResp.Usage.InputTokens > 0 || coreResp.Usage.OutputTokens > 0 {
-			usage = usageFromAnthropic(string(config.ProtocolAnthropic), "core_response", anthropic.Usage{
-				InputTokens:              coreResp.Usage.InputTokens,
-				OutputTokens:             coreResp.Usage.OutputTokens,
-				CacheCreationInputTokens: 0,
-				CacheReadInputTokens:     coreResp.Usage.CachedInputTokens,
+			usage = usageFromAnthropic(string(config.ProtocolAnthropic), "core_response", format.CoreUsage{
+				InputTokens:       coreResp.Usage.InputTokens,
+				OutputTokens:      coreResp.Usage.OutputTokens,
+				CachedInputTokens: coreResp.Usage.CachedInputTokens,
 			}, true) // input tokens now include cache (normalized at adapter level)
 		}
 		s.onRequestCompleted(openAIReq.Model, preferred.UpstreamModel, preferred.ProviderKey, requestStart, usage, 0, "success", "")
@@ -626,9 +646,7 @@ func (s *Server) handleAdapterStream(
 		streamRecord.AnthropicRequest = anthReq
 		streamRecord.UpstreamRequest = anthReq
 
-		effectiveProvider := s.resolveProvider(openAIReq.Model, &provider.ResolvedRoute{
-			Candidates: []provider.ProviderCandidate{candidate},
-		})
+		effectiveProvider := candidate.Client
 		if effectiveProvider == nil {
 			log.Error("adapter stream: no upstream provider resolved")
 			payload := openai.ErrorResponse{
@@ -659,7 +677,7 @@ func (s *Server) handleAdapterStream(
 			writeOpenAIError(w, http.StatusBadGateway, payload)
 			return
 		}
-		defer stream.Close()
+		_ = stream
 
 		providerStream, ok = s.adapterRegistry.GetProviderStream(config.ProtocolAnthropic)
 		if !ok {
@@ -714,7 +732,7 @@ func (s *Server) handleAdapterStream(
 			prependCachedReasoningForChat(chatReq, sess)
 		}
 
-		chatClient, ok := s.chatClients[candidate.ProviderKey]
+		chatClientRaw, ok := s.chatClients[candidate.ProviderKey]
 		if !ok {
 			log.Error("adapter stream: no chat client", "provider", candidate.ProviderKey)
 			payload := openai.ErrorResponse{
@@ -729,14 +747,28 @@ func (s *Server) handleAdapterStream(
 			writeOpenAIError(w, http.StatusBadGateway, payload)
 			return
 		}
+		chatClient, ok := chatClientRaw.(*chat.Client)
+		if !ok {
+			log.Error("adapter stream: chat client type assertion failed", "provider", candidate.ProviderKey)
+			payload := openai.ErrorResponse{
+				Error: openai.ErrorObject{
+					Message: fmt.Sprintf("invalid chat client for provider %q", candidate.ProviderKey),
+					Type:    "server_error",
+					Code:    "internal_error",
+				},
+			}
+			streamRecord.Error = traceError("stream_chat_type", fmt.Errorf("invalid chat client for %q", candidate.ProviderKey))
+			streamRecord.OpenAIResponse = payload
+			writeOpenAIError(w, http.StatusInternalServerError, payload)
+			return
+		}
 
 		streamRecord.ChatRequest = chatReq
 		var chatStream <-chan chat.ChatStreamChunk
 		var err error
 		if s.providerMgr != nil && s.providerMgr.ResolvedWebSearch(candidate.ProviderKey) == "injected" && hasWebSearchTool(openAIReq) {
-			cfg := s.currentConfig()
-			injectChatSearchTools(chatReq, cfg.FirecrawlAPIKey)
-			chatStream, err = s.chatSearchBufferedStream(ctx, chatClient, chatReq, cfg.TavilyAPIKey, cfg.FirecrawlAPIKey, s.maxSearchRounds())
+			injectChatSearchTools(chatReq, s.runtime.Current().Config.FirecrawlAPIKey)
+			chatStream, err = s.chatSearchBufferedStream(ctx, chatClient, chatReq, s.runtime.Current().Config.TavilyAPIKey, s.runtime.Current().Config.FirecrawlAPIKey, s.maxSearchRounds())
 		} else {
 			chatStream, err = chatClient.StreamChat(ctx, chatReq)
 		}
@@ -803,7 +835,7 @@ func (s *Server) handleAdapterStream(
 			return
 		}
 
-		googleClient, ok := s.googleClients[candidate.ProviderKey]
+		googleClientRaw, ok := s.googleClients[candidate.ProviderKey]
 		if !ok {
 			log.Error("adapter stream: no google client", "provider", candidate.ProviderKey)
 			payload := openai.ErrorResponse{
@@ -816,6 +848,21 @@ func (s *Server) handleAdapterStream(
 			streamRecord.Error = traceError("stream_google_client", fmt.Errorf("no google client for %q", candidate.ProviderKey))
 			streamRecord.OpenAIResponse = payload
 			writeOpenAIError(w, http.StatusBadGateway, payload)
+			return
+		}
+		googleClient, ok := googleClientRaw.(*google.Client)
+		if !ok {
+			log.Error("adapter stream: google client type assertion failed", "provider", candidate.ProviderKey)
+			payload := openai.ErrorResponse{
+				Error: openai.ErrorObject{
+					Message: fmt.Sprintf("invalid google client for provider %q", candidate.ProviderKey),
+					Type:    "server_error",
+					Code:    "internal_error",
+				},
+			}
+			streamRecord.Error = traceError("stream_google_type", fmt.Errorf("invalid google client for %q", candidate.ProviderKey))
+			streamRecord.OpenAIResponse = payload
+			writeOpenAIError(w, http.StatusInternalServerError, payload)
 			return
 		}
 
@@ -996,7 +1043,7 @@ func (s *Server) handleAdapterStream(
 									s.pluginRegistry.OnStreamEvent(openAIReq.Model, plugin.StreamEvent{
 										Type:  pluginType,
 										Index: ev.Index,
-										Block: ev.ContentBlock,
+										Block: anthropicContentBlockPtrToFormat(ev.ContentBlock),
 										Delta: ev.Delta,
 									}, states)
 								}
@@ -1093,11 +1140,10 @@ func (s *Server) handleAdapterStream(
 	if s.pluginRegistry != nil {
 		usage := zeroUsage(string(config.ProtocolAnthropic), "anthropic_stream")
 		if finalUsage.InputTokens > 0 || finalUsage.OutputTokens > 0 {
-			usage = usageFromAnthropic(string(config.ProtocolAnthropic), "core_stream", anthropic.Usage{
-				InputTokens:              finalUsage.InputTokens,
-				OutputTokens:             finalUsage.OutputTokens,
-				CacheCreationInputTokens: 0,
-				CacheReadInputTokens:     finalUsage.InputTokensDetails.CachedTokens,
+			usage = usageFromAnthropic(string(config.ProtocolAnthropic), "core_stream", format.CoreUsage{
+				InputTokens:       finalUsage.InputTokens,
+				OutputTokens:      finalUsage.OutputTokens,
+				CachedInputTokens: finalUsage.InputTokensDetails.CachedTokens,
 			}, true) // input tokens now include cache (normalized at adapter level)
 		}
 		s.onRequestCompleted(openAIReq.Model, candidate.UpstreamModel, candidate.ProviderKey, requestStart, usage, 0, "success", "")
@@ -1168,21 +1214,21 @@ func prependCachedThinking(upstreamReq *anthropic.MessageRequest, sess *session.
 			}
 		}
 		// Fallback: try text-based caching (for text-only assistant messages).
-		if !hasThinkingBlock(msg.Content) {
-			prepended := state.PrependCachedForAssistantText(msg.Content)
-			if len(prepended) > len(msg.Content) {
-				msg.Content = prepended
+			if !hasThinkingBlock(msg.Content) {
+				prepended := state.PrependCachedForAssistantText(anthropicContentSliceToFormat(msg.Content))
+				if len(prepended) > len(msg.Content) {
+					msg.Content = formatContentSliceToAnthropic(prepended)
+				}
 			}
-		}
 	}
 }
 
 // normalizeThinkingBlock ensures a thinking block has the correct Type field.
-func normalizeThinkingBlock(block anthropic.ContentBlock) anthropic.ContentBlock {
+func normalizeThinkingBlock(block format.CoreContentBlock) anthropic.ContentBlock {
 	return anthropic.ContentBlock{
 		Type:      "thinking",
-		Thinking:  block.Thinking,
-		Signature: block.Signature,
+		Thinking:  block.ReasoningText,
+		Signature: block.ReasoningSignature,
 	}
 }
 
@@ -1231,10 +1277,10 @@ func prependCachedReasoningForChat(chatReq *chat.ChatRequest, sess *session.Sess
 					continue
 				}
 				if cached, ok := state.CachedForToolCall(tc.ID); ok {
-					thinking := cached.Thinking
-					if thinking == "" {
-						thinking = cached.Text
-					}
+						thinking := cached.ReasoningText
+						if thinking == "" {
+							thinking = cached.Text
+						}
 					if thinking != "" {
 						msg.ReasoningContent = thinking
 						break
@@ -1263,9 +1309,74 @@ func cacheReasoningForChat(sess *session.Session, toolCallIDs []string, reasonin
 		return
 	}
 	// The State caches thinking blocks by tool call ID.
-	anthropicBlock := anthropic.ContentBlock{
-		Type:     "thinking",
-		Thinking: reasoning,
+	formatBlock := format.CoreContentBlock{
+		Type:          "reasoning",
+		ReasoningText: reasoning,
 	}
-	state.RememberForToolCalls(toolCallIDs, anthropicBlock)
+	state.RememberForToolCalls(toolCallIDs, formatBlock)
+}
+
+// anthropicContentToFormat converts an anthropic.ContentBlock to format.CoreContentBlock.
+func anthropicContentToFormat(block anthropic.ContentBlock) format.CoreContentBlock {
+	out := format.CoreContentBlock{
+		Type: block.Type,
+		Text: block.Text,
+	}
+	switch block.Type {
+	case "thinking":
+		out.Type = "reasoning"
+		out.ReasoningText = block.Thinking
+		out.ReasoningSignature = block.Signature
+	case "tool_use":
+		out.ToolUseID = block.ID
+		out.ToolName = block.Name
+		out.ToolInput = block.Input
+	}
+	return out
+}
+
+// formatContentToAnthropic converts a format.CoreContentBlock to anthropic.ContentBlock.
+func formatContentToAnthropic(block format.CoreContentBlock) anthropic.ContentBlock {
+	out := anthropic.ContentBlock{
+		Type: block.Type,
+		Text: block.Text,
+	}
+	switch block.Type {
+	case "reasoning":
+		out.Type = "thinking"
+		out.Thinking = block.ReasoningText
+		out.Signature = block.ReasoningSignature
+	case "tool_use":
+		out.ID = block.ToolUseID
+		out.Name = block.ToolName
+		out.Input = block.ToolInput
+	}
+	return out
+}
+
+// anthropicContentBlockPtrToFormat converts *anthropic.ContentBlock to *format.CoreContentBlock.
+func anthropicContentBlockPtrToFormat(block *anthropic.ContentBlock) *format.CoreContentBlock {
+	if block == nil {
+		return nil
+	}
+	b := anthropicContentToFormat(*block)
+	return &b
+}
+
+// anthropicContentSliceToFormat converts []anthropic.ContentBlock to []format.CoreContentBlock.
+func anthropicContentSliceToFormat(blocks []anthropic.ContentBlock) []format.CoreContentBlock {
+	result := make([]format.CoreContentBlock, len(blocks))
+	for i, b := range blocks {
+		result[i] = anthropicContentToFormat(b)
+	}
+	return result
+}
+
+// formatContentSliceToAnthropic converts []format.CoreContentBlock to []anthropic.ContentBlock.
+func formatContentSliceToAnthropic(blocks []format.CoreContentBlock) []anthropic.ContentBlock {
+	result := make([]anthropic.ContentBlock, len(blocks))
+	for i, b := range blocks {
+		result[i] = formatContentToAnthropic(b)
+	}
+	return result
 }

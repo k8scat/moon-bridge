@@ -1,16 +1,14 @@
-// Package provider manages multiple upstream LLM providers and routes
-// requests to the correct provider based on the requested model.
 package provider
 
 import (
-	"moonbridge/internal/foundation/config"
+	"moonbridge/internal/config"
 	"moonbridge/internal/service/stats"
 )
 
 // BuildProviderDefsFromConfig converts config into provider definition map.
-func BuildProviderDefsFromConfig(cfg config.Config) map[string]ProviderConfig {
-	defs := make(map[string]ProviderConfig, len(cfg.ProviderDefs))
-	for key, def := range cfg.ProviderDefs {
+func BuildProviderDefsFromConfig(cfg config.ProviderConfig) map[string]ProviderConfig {
+	defs := make(map[string]ProviderConfig, len(cfg.Providers))
+	for key, def := range cfg.Providers {
 		modelNames := make([]string, 0, len(def.Models))
 		for name := range def.Models {
 			modelNames = append(modelNames, name)
@@ -35,7 +33,7 @@ func BuildProviderDefsFromConfig(cfg config.Config) map[string]ProviderConfig {
 }
 
 // BuildModelRoutesFromConfig converts config model entries into route definitions.
-func BuildModelRoutesFromConfig(cfg config.Config) map[string]ModelRoute {
+func BuildModelRoutesFromConfig(cfg config.ProviderConfig) map[string]ModelRoute {
 	routes := make(map[string]ModelRoute, len(cfg.Routes))
 	for alias, route := range cfg.Routes {
 		routes[alias] = ModelRoute{
@@ -47,7 +45,7 @@ func BuildModelRoutesFromConfig(cfg config.Config) map[string]ModelRoute {
 }
 
 // BuildPricingFromConfig computes a pricing map from routes and provider models.
-func BuildPricingFromConfig(cfg config.Config) map[string]stats.ModelPricing {
+func BuildPricingFromConfig(cfg config.ProviderConfig) map[string]stats.ModelPricing {
 	pricing := make(map[string]stats.ModelPricing)
 	for alias, route := range cfg.Routes {
 		if route.InputPrice > 0 || route.OutputPrice > 0 || route.CacheWritePrice > 0 || route.CacheReadPrice > 0 {
@@ -59,7 +57,7 @@ func BuildPricingFromConfig(cfg config.Config) map[string]stats.ModelPricing {
 			}
 		}
 	}
-	for providerKey, def := range cfg.ProviderDefs {
+	for providerKey, def := range cfg.Providers {
 		for modelName, meta := range def.Models {
 			slug := providerKey + "/" + modelName
 			newSlug := modelName + "(" + providerKey + ")"

@@ -11,8 +11,7 @@ import (
 	"fmt"
 	"sync"
 
-	"moonbridge/internal/foundation/config"
-	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/format"
 )
 
 // ============================================================================
@@ -25,7 +24,7 @@ import (
 // Clean room: no dependency on protocol-specific packages beyond chat/.
 // Only references: config, format, and chat types.
 type ChatProviderAdapter struct {
-	cfg   config.Config
+	cfgMaxTokens int
 	client *Client
 	hooks format.CorePluginHooks
 
@@ -37,9 +36,9 @@ type ChatProviderAdapter struct {
 //
 // client is the HTTP client for Chat API calls. May be nil if the adapter
 // is registered for type conversion only (dispatch layer manages the client).
-func NewChatProviderAdapter(cfg config.Config, client *Client, hooks format.CorePluginHooks) *ChatProviderAdapter {
+func NewChatProviderAdapter(cfgMaxTokens int, client *Client, hooks format.CorePluginHooks) *ChatProviderAdapter {
 	return &ChatProviderAdapter{
-		cfg:    cfg,
+		cfgMaxTokens: cfgMaxTokens,
 		client: client,
 		hooks:  hooks.WithDefaults(),
 	}
@@ -47,7 +46,7 @@ func NewChatProviderAdapter(cfg config.Config, client *Client, hooks format.Core
 
 // ProviderProtocol returns "openai-chat".
 func (a *ChatProviderAdapter) ProviderProtocol() string {
-	return config.ProtocolOpenAIChat
+	return "openai-chat"
 }
 
 // =========================================================================
@@ -100,8 +99,8 @@ func (a *ChatProviderAdapter) FromCoreRequest(ctx context.Context, req *format.C
 	}
 	if req.MaxTokens > 0 {
 		chatReq.MaxTokens = req.MaxTokens
-	} else if a.cfg.DefaultMaxTokens > 0 {
-		chatReq.MaxTokens = a.cfg.DefaultMaxTokens
+	} else if a.cfgMaxTokens > 0 {
+		chatReq.MaxTokens = a.cfgMaxTokens
 	}
 	if len(req.StopSequences) > 0 {
 		chatReq.Stop = req.StopSequences

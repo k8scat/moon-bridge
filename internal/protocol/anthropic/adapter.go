@@ -6,8 +6,7 @@ import (
 	"io"
 	"sync"
 
-	"moonbridge/internal/foundation/config"
-	"moonbridge/internal/protocol/format"
+	"moonbridge/internal/format"
 )
 
 // ---------------------------------------------------------------------------
@@ -43,7 +42,7 @@ type CacheManager interface {
 // Clean room: no dependency on internal/protocol/bridge/.
 // Only references: config, format, and anthropic types.
 type AnthropicProviderAdapter struct {
-	cfg      config.Config
+	cfgMaxTokens int
 	cacheMgr CacheManager
 	hooks    format.CorePluginHooks
 
@@ -55,9 +54,9 @@ type AnthropicProviderAdapter struct {
 //
 // cacheMgr handles prompt cache planning.  Pass a no-op implementation
 // if caching is not needed.
-func NewAnthropicProviderAdapter(cfg config.Config, cacheMgr CacheManager, hooks format.CorePluginHooks) *AnthropicProviderAdapter {
+func NewAnthropicProviderAdapter(cfgMaxTokens int, cacheMgr CacheManager, hooks format.CorePluginHooks) *AnthropicProviderAdapter {
 	return &AnthropicProviderAdapter{
-		cfg:      cfg,
+		cfgMaxTokens: cfgMaxTokens,
 		cacheMgr: cacheMgr,
 		hooks:    hooks.WithDefaults(),
 	}
@@ -111,7 +110,7 @@ func (a *AnthropicProviderAdapter) anthropicToCoreRequest(req *MessageRequest) *
 	// Messages
 	for _, msg := range req.Messages {
 		coreReq.Messages = append(coreReq.Messages, format.CoreMessage{
-			Role:    msg.Role,
+			Role:    a.mapRole(msg.Role),
 			Content: a.fromContentBlocks(msg.Content),
 		})
 	}
@@ -231,7 +230,7 @@ func (a *AnthropicProviderAdapter) FromCoreRequest(ctx context.Context, req *for
 	// Messages
 	for _, msg := range req.Messages {
 		anthropicReq.Messages = append(anthropicReq.Messages, Message{
-			Role:    msg.Role,
+			Role:    a.mapRole(msg.Role),
 			Content: a.toContentBlocks(msg.Content),
 		})
 	}
@@ -684,10 +683,22 @@ func (a *AnthropicProviderAdapter) defaultMaxTokens(requested int) int {
 	if requested > 0 {
 		return requested
 	}
-	if a.cfg.DefaultMaxTokens > 0 {
-		return a.cfg.DefaultMaxTokens
+	if a.cfgMaxTokens > 0 {
+		return a.cfgMaxTokens
 	}
 	return 1024
+}
+
+// mapRole maps a CoreMessage role to an Anthropic Messages API role.
+// Anthropic does not accept "tool" as a message role; tool results must be
+// sent as "user" messages with tool_result content blocks.
+func (a *AnthropicProviderAdapter) mapRole(role string) string {
+	switch role {
+	case "tool":
+		return "user"
+	default:
+		return role
+	}
 }
 
 // extractCacheControl reads cache_control from a CoreContentBlock.Extensions map.

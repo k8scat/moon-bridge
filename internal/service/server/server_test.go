@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,10 +16,10 @@ import (
 	"moonbridge/internal/extension/codex"
 	deepseekv4 "moonbridge/internal/extension/deepseek_v4"
 	"moonbridge/internal/extension/plugin"
-	"moonbridge/internal/foundation/config"
-	"moonbridge/internal/foundation/logger"
+	"moonbridge/internal/config"
+	"moonbridge/internal/logger"
 	"moonbridge/internal/protocol/openai"
-	"moonbridge/internal/protocol/anthropic"
+	"moonbridge/internal/format"
 	"moonbridge/internal/service/provider"
 	"moonbridge/internal/service/server"
 	"moonbridge/internal/service/stats"
@@ -30,57 +31,57 @@ func extensionEnabled(enabled bool) config.ExtensionSettings {
 }
 
 type fakeProvider struct {
-	request      anthropic.MessageRequest
-	streamEvents []anthropic.StreamEvent
+	request      format.CoreRequest
+	streamEvents []format.CoreStreamEvent
 }
 
-func (provider *fakeProvider) CreateMessage(_ context.Context, request anthropic.MessageRequest) (anthropic.MessageResponse, error) {
+func (provider *fakeProvider) CreateMessage(_ context.Context, req any) (any, error) {
+	request, ok := req.(format.CoreRequest)
+	if !ok {
+		return nil, fmt.Errorf("expected format.CoreRequest, got %T", req)
+	}
 	provider.request = request
-	return anthropic.MessageResponse{
-		ID:         "msg_123",
-		Type:       "message",
-		Role:       "assistant",
+	return format.CoreResponse{
+		ID:     "msg_123",
+		Status: "completed",
+		Messages: []format.CoreMessage{{
+			Role:    "assistant",
+			Content: []format.CoreContentBlock{{Type: "text", Text: "Hello from provider"}},
+		}},
+		Usage:      format.CoreUsage{InputTokens: 4, OutputTokens: 3},
 		StopReason: "end_turn",
-		Content:    []anthropic.ContentBlock{{Type: "text", Text: "Hello from provider"}},
-		Usage:      anthropic.Usage{InputTokens: 4, OutputTokens: 3},
 	}, nil
 }
 
-func (provider *fakeProvider) StreamMessage(_ context.Context, request anthropic.MessageRequest) (anthropic.Stream, error) {
+func (provider *fakeProvider) StreamMessage(_ context.Context, req any) (<-chan any, error) {
+	request, ok := req.(format.CoreRequest)
+	if !ok {
+		return nil, fmt.Errorf("expected format.CoreRequest, got %T", req)
+	}
 	provider.request = request
-	return &sliceStream{events: provider.streamEvents}, nil
+	out := make(chan any)
+	go func() {
+		defer close(out)
+		for _, evt := range provider.streamEvents {
+			out <- evt
+		}
+	}()
+	return out, nil
 }
 
 type providerFunc struct {
-	create func(context.Context, anthropic.MessageRequest) (anthropic.MessageResponse, error)
-	stream func(context.Context, anthropic.MessageRequest) (anthropic.Stream, error)
+	create func(context.Context, any) (any, error)
+	stream func(context.Context, any) (<-chan any, error)
 }
 
-func (provider providerFunc) CreateMessage(ctx context.Context, request anthropic.MessageRequest) (anthropic.MessageResponse, error) {
-	return provider.create(ctx, request)
+func (provider providerFunc) CreateMessage(ctx context.Context, req any) (any, error) {
+	return provider.create(ctx, req)
 }
 
-func (provider providerFunc) StreamMessage(ctx context.Context, request anthropic.MessageRequest) (anthropic.Stream, error) {
-	return provider.stream(ctx, request)
+func (provider providerFunc) StreamMessage(ctx context.Context, req any) (<-chan any, error) {
+	return provider.stream(ctx, req)
 }
 
-type sliceStream struct {
-	events []anthropic.StreamEvent
-	index  int
-}
-
-func (stream *sliceStream) Next() (anthropic.StreamEvent, error) {
-	if stream.index >= len(stream.events) {
-		return anthropic.StreamEvent{}, io.EOF
-	}
-	event := stream.events[stream.index]
-	stream.index++
-	return event, nil
-}
-
-func (stream *sliceStream) Close() error {
-	return nil
-}
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
@@ -152,22 +153,27 @@ func TestResponsesHandlerReturnsOpenAIResponse(t *testing.T) {
 func TestResponsesHandlerCompletionMetricsUsesRawAnthropicUsage(t *testing.T) {
 	t.Skip("needs adapter to new dispatch architecture: requires ProviderMgr config")
 	provider := &fakeProvider{}
-	providerResponseUsage := anthropic.Usage{
-		InputTokens:              10,
-		OutputTokens:             12,
-		CacheCreationInputTokens: 30,
-		CacheReadInputTokens:     90,
+	providerResponseUsage := format.CoreUsage{
+		InputTokens:       10,
+		OutputTokens:      12,
+		CachedInputTokens: 120,
 	}
 	providerWithUsage := providerFunc{
-		create: func(_ context.Context, request anthropic.MessageRequest) (anthropic.MessageResponse, error) {
+		create: func(_ context.Context, req any) (any, error) {
+			request, ok := req.(format.CoreRequest)
+			if !ok {
+				return nil, fmt.Errorf("expected format.CoreRequest, got %T", req)
+			}
 			provider.request = request
-			return anthropic.MessageResponse{
-				ID:         "msg_123",
-				Type:       "message",
-				Role:       "assistant",
-				StopReason: "end_turn",
-				Content:    []anthropic.ContentBlock{{Type: "text", Text: "usage"}},
+			return format.CoreResponse{
+				ID:     "msg_123",
+				Status: "completed",
+				Messages: []format.CoreMessage{{
+					Role:    "assistant",
+					Content: []format.CoreContentBlock{{Type: "text", Text: "usage"}},
+				}},
 				Usage:      providerResponseUsage,
+				StopReason: "end_turn",
 			}, nil
 		},
 	}
@@ -208,17 +214,12 @@ func TestResponsesHandlerCompletionMetricsUsesRawAnthropicUsage(t *testing.T) {
 func TestStreamingCompletionMetricsMergesRawAnthropicDeltaUsage(t *testing.T) {
 	t.Skip("needs adapter to new dispatch architecture: requires ProviderMgr config")
 	provider := &fakeProvider{
-		streamEvents: []anthropic.StreamEvent{
-			{Type: "message_start", Message: &anthropic.MessageResponse{ID: "msg_1", Type: "message", Role: "assistant", Usage: anthropic.Usage{InputTokens: 85822}}},
-			{Type: "content_block_start", Index: 0, ContentBlock: &anthropic.ContentBlock{Type: "text"}},
-			{Type: "content_block_delta", Index: 0, Delta: anthropic.StreamDelta{Type: "text_delta", Text: "Hi"}},
-			{Type: "content_block_stop", Index: 0},
-			{Type: "message_delta", Delta: anthropic.StreamDelta{StopReason: "end_turn"}, Usage: &anthropic.Usage{
-				InputTokens:          574,
-				OutputTokens:         145,
-				CacheReadInputTokens: 85248,
-			}},
-			{Type: "message_stop"},
+		streamEvents: []format.CoreStreamEvent{
+			{Type: format.CoreEventInProgress, Usage: &format.CoreUsage{InputTokens: 85822}},
+			{Type: format.CoreContentBlockStarted, Index: 0, ContentBlock: &format.CoreContentBlock{Type: "text"}},
+			{Type: format.CoreTextDelta, Index: 0, Delta: "Hi"},
+			{Type: format.CoreContentBlockDone, Index: 0},
+			{Type: format.CoreEventCompleted, StopReason: "end_turn", Usage: &format.CoreUsage{InputTokens: 574, OutputTokens: 145, CachedInputTokens: 85248}},
 		},
 	}
 	capture := &captureCompletionPlugin{}
@@ -258,16 +259,12 @@ func TestStreamingCompletionMetricsMergesRawAnthropicDeltaUsage(t *testing.T) {
 func TestStreamingCompletionMetricsKeepsStartFreshInputForCacheOnlyDelta(t *testing.T) {
 	t.Skip("needs adapter to new dispatch architecture: requires ProviderMgr config")
 	provider := &fakeProvider{
-		streamEvents: []anthropic.StreamEvent{
-			{Type: "message_start", Message: &anthropic.MessageResponse{ID: "msg_1", Type: "message", Role: "assistant", Usage: anthropic.Usage{InputTokens: 574}}},
-			{Type: "content_block_start", Index: 0, ContentBlock: &anthropic.ContentBlock{Type: "text"}},
-			{Type: "content_block_delta", Index: 0, Delta: anthropic.StreamDelta{Type: "text_delta", Text: "Hi"}},
-			{Type: "content_block_stop", Index: 0},
-			{Type: "message_delta", Delta: anthropic.StreamDelta{StopReason: "end_turn"}, Usage: &anthropic.Usage{
-				OutputTokens:         145,
-				CacheReadInputTokens: 85248,
-			}},
-			{Type: "message_stop"},
+		streamEvents: []format.CoreStreamEvent{
+			{Type: format.CoreEventInProgress, Usage: &format.CoreUsage{InputTokens: 574}},
+			{Type: format.CoreContentBlockStarted, Index: 0, ContentBlock: &format.CoreContentBlock{Type: "text"}},
+			{Type: format.CoreTextDelta, Index: 0, Delta: "Hi"},
+			{Type: format.CoreContentBlockDone, Index: 0},
+			{Type: format.CoreEventCompleted, StopReason: "end_turn", Usage: &format.CoreUsage{OutputTokens: 145, CachedInputTokens: 85248}},
 		},
 	}
 	capture := &captureCompletionPlugin{}
@@ -409,8 +406,8 @@ func TestBuildModelInfoFromRouteUsesTokenTruncationPolicyForGPT52(t *testing.T) 
 }
 
 func TestBuildModelInfosFromConfigIncludesProviderModelsBeforeRouteFallback(t *testing.T) {
-	models := codex.BuildModelInfosFromConfig(config.Config{
-		ProviderDefs: map[string]config.ProviderDef{
+	models := codex.BuildModelInfosFromConfig(config.ProviderConfig{
+		Providers: map[string]config.ProviderDef{
 			"p1": {
 				Models: map[string]config.ModelMeta{
 					"model-b": {DisplayName: "Model B", ContextWindow: 2000},
@@ -427,7 +424,7 @@ func TestBuildModelInfosFromConfigIncludesProviderModelsBeforeRouteFallback(t *t
 			"alias-a":    {Provider: "p1", Model: "model-a", DisplayName: "Alias A"},
 			"p1/model-a": {Provider: "p1", Model: "model-a", DisplayName: "Duplicate Direct"},
 		},
-	})
+	}, config.PluginConfig{})
 
 	var slugs []string
 	for _, model := range models {
@@ -485,13 +482,12 @@ func TestResponsesHandlerRejectsUnsupportedToolType(t *testing.T) {
 func TestResponsesHandlerStreamsOpenAIEvents(t *testing.T) {
 	t.Skip("needs adapter to new dispatch architecture: requires ProviderMgr config")
 	provider := &fakeProvider{
-		streamEvents: []anthropic.StreamEvent{
-			{Type: "message_start", Message: &anthropic.MessageResponse{ID: "msg_1", Type: "message", Role: "assistant"}},
-			{Type: "content_block_start", Index: 0, ContentBlock: &anthropic.ContentBlock{Type: "text"}},
-			{Type: "content_block_delta", Index: 0, Delta: anthropic.StreamDelta{Type: "text_delta", Text: "Hi"}},
-			{Type: "content_block_stop", Index: 0},
-			{Type: "message_delta", Delta: anthropic.StreamDelta{StopReason: "end_turn"}},
-			{Type: "message_stop"},
+		streamEvents: []format.CoreStreamEvent{
+			{Type: format.CoreEventInProgress},
+			{Type: format.CoreContentBlockStarted, Index: 0, ContentBlock: &format.CoreContentBlock{Type: "text"}},
+			{Type: format.CoreTextDelta, Index: 0, Delta: "Hi"},
+			{Type: format.CoreContentBlockDone, Index: 0},
+			{Type: format.CoreEventCompleted, StopReason: "end_turn"},
 		},
 	}
 	handler := server.New(server.Config{
@@ -521,17 +517,14 @@ func TestResponsesHandlerStreamsOpenAIEvents(t *testing.T) {
 func TestResponsesHandlerReusesCodexSessionForDeepSeekThinking(t *testing.T) {
 	t.Skip("needs adapter to new dispatch architecture: requires ProviderMgr config")
 	provider := &fakeProvider{
-		streamEvents: []anthropic.StreamEvent{
-			{Type: "message_start", Message: &anthropic.MessageResponse{ID: "msg_1", Type: "message", Role: "assistant"}},
-			{Type: "content_block_start", Index: 0, ContentBlock: &anthropic.ContentBlock{Type: "thinking"}},
-			{Type: "content_block_delta", Index: 0, Delta: anthropic.StreamDelta{Type: "thinking_delta", Thinking: "inspect before listing"}},
-			{Type: "content_block_delta", Index: 0, Delta: anthropic.StreamDelta{Type: "signature_delta", Signature: "sig_1"}},
-			{Type: "content_block_stop", Index: 0},
-			{Type: "content_block_start", Index: 1, ContentBlock: &anthropic.ContentBlock{Type: "tool_use", ID: "call_ls", Name: "exec_command", Input: json.RawMessage(`{}`)}},
-			{Type: "content_block_delta", Index: 1, Delta: anthropic.StreamDelta{Type: "input_json_delta", PartialJSON: `{"cmd":"ls"}`}},
-			{Type: "content_block_stop", Index: 1},
-			{Type: "message_delta", Delta: anthropic.StreamDelta{StopReason: "tool_use"}},
-			{Type: "message_stop"},
+		streamEvents: []format.CoreStreamEvent{
+			{Type: format.CoreEventInProgress},
+			{Type: format.CoreContentBlockStarted, Index: 0, ContentBlock: &format.CoreContentBlock{Type: "reasoning", ReasoningText: "inspect before listing", ReasoningSignature: "sig_1"}},
+			{Type: format.CoreContentBlockDone, Index: 0},
+			{Type: format.CoreContentBlockStarted, Index: 1, ContentBlock: &format.CoreContentBlock{Type: "tool_use", ToolUseID: "call_ls", ToolName: "exec_command", ToolInput: json.RawMessage(`{}`)}},
+			{Type: format.CoreToolCallArgsDelta, Index: 1, Delta: `{"cmd":"ls"}`},
+			{Type: format.CoreContentBlockDone, Index: 1},
+			{Type: format.CoreEventCompleted, StopReason: "tool_use"},
 		},
 	}
 	cfg := config.Config{
@@ -588,10 +581,10 @@ func TestResponsesHandlerReusesCodexSessionForDeepSeekThinking(t *testing.T) {
 	if assistant.Role != "assistant" || len(assistant.Content) != 2 {
 		t.Fatalf("assistant message = %+v", assistant)
 	}
-	if assistant.Content[0].Type != "thinking" || assistant.Content[0].Thinking != "inspect before listing" || assistant.Content[0].Signature != "sig_1" {
+	if assistant.Content[0].Type != "reasoning" || assistant.Content[0].ReasoningText != "inspect before listing" || assistant.Content[0].ReasoningSignature != "sig_1" {
 		t.Fatalf("thinking block = %+v", assistant.Content[0])
 	}
-	if assistant.Content[1].Type != "tool_use" || assistant.Content[1].ID != "call_ls" {
+	if assistant.Content[1].Type != "tool_use" || assistant.Content[1].ToolUseID != "call_ls" {
 		t.Fatalf("tool use block = %+v", assistant.Content[1])
 	}
 }
@@ -1061,7 +1054,7 @@ func TestAuthWithNoTokenConfiguredPassesAllRequests(t *testing.T) {
 func TestAuthRejectsRequestsWithoutValidToken(t *testing.T) {
 	handler := server.New(server.Config{
 		Provider:  &fakeProvider{},
-		AppConfig: config.Config{AuthToken: "my-secret"},
+		AppConfig: config.ServerConfig{AuthToken: "my-secret"},
 	})
 
 	for name, req := range map[string]*http.Request{
@@ -1088,11 +1081,8 @@ func TestAuthRejectsRequestsWithoutValidToken(t *testing.T) {
 func TestAuthAcceptsValidBearerToken(t *testing.T) {
 	t.Skip("needs adapter to new dispatch architecture: requires ProviderMgr config")
 	handler := server.New(server.Config{
-		AppConfig: config.Config{
-			AuthToken:        "my-secret",
-			DefaultMaxTokens: 1024,
-			Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "claude-test"}},
-			Cache:            config.CacheConfig{Mode: "off"},
+		AppConfig: config.ServerConfig{
+			AuthToken: "my-secret",
 		},
 		Provider: &fakeProvider{},
 	})

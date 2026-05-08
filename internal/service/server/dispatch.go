@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"moonbridge/internal/extension/plugin"
-	"moonbridge/internal/foundation/config"
-	"moonbridge/internal/foundation/logger"
+	"moonbridge/internal/config"
+	"moonbridge/internal/logger"
 	"moonbridge/internal/protocol/openai"
 	"moonbridge/internal/service/provider"
 	"moonbridge/internal/service/stats"

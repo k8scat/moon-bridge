@@ -29,7 +29,10 @@ func hasWebSearchTool(req openai.ResponsesRequest) bool {
 
 // maxSearchRounds returns the configured max search rounds from the server config.
 func (s *Server) maxSearchRounds() int {
-	rounds := s.currentConfig().SearchMaxRounds
+	rounds := 5
+	if s.runtime != nil {
+		rounds = s.runtime.Current().Config.SearchMaxRounds
+	}
 	if rounds <= 0 {
 		rounds = 5
 	}

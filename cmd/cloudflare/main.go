@@ -8,10 +8,10 @@ import (
 
 	"moonbridge/internal/service/app"
 
-	"moonbridge/internal/foundation/config"
-	"moonbridge/internal/foundation/db"
+	"moonbridge/internal/config"
+	"moonbridge/internal/db"
 	"log/slog"
-	"moonbridge/internal/foundation/logger"
+	"moonbridge/internal/logger"
 	"moonbridge/internal/protocol/anthropic"
 	"moonbridge/internal/service/provider"
 	"moonbridge/internal/service/server"
