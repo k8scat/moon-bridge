@@ -39,7 +39,9 @@ func (cat BuiltinExtensionCatalog) ConfigSpecs() []config.ExtensionConfigSpec {
 
 func (cat BuiltinExtensionCatalog) NewRegistry(logger *slog.Logger, cfg config.Config) *plugin.Registry {
 	registry := plugin.NewRegistry(logger)
-	registry.Register(deepseekv4.NewPlugin())
+	registry.Register(deepseekv4.NewPlugin(func(model string) bool {
+		return cfg.ExtensionEnabled("deepseek_v4", model)
+	}))
 	registry.Register(visual.NewPlugin())
 	registry.Register(dbsqlite.NewPlugin())
 
