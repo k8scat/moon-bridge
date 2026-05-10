@@ -74,18 +74,17 @@ func (p *Plugin) Init(ctx plugin.PluginContext) error {
 func (p *Plugin) Shutdown() error { return nil }
 
 func (p *Plugin) EnabledForModel(string) bool {
-	if !pluginExtensionEnabled(p.pluginCfg, PluginName) {
-		return false
-	}
-	return !p.persistenceDisabled
+	// Metrics is enabled only when the DB store has been initialized.
+	// Without a store, there's nothing to record to.
+	return p.metricsStore != nil
 }
 
 // --- DBConsumer ---
 
 func (p *Plugin) DBConsumer() db.Consumer {
-	if !pluginExtensionEnabled(p.pluginCfg, PluginName) {
-		return nil
-	}
+	// DBConsumer registration is always allowed. The DB registry handles
+	// availability — without a DB provider, BindStore is never called and
+	// metricsStore remains nil, so OnRequestCompleted silently drops records.
 	return p
 }
 

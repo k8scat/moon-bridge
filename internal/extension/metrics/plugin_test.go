@@ -48,10 +48,10 @@ func TestConfigSpecs(t *testing.T) {
 	}
 }
 
-func TestDBConsumerNilWhenDisabled(t *testing.T) {
+func TestDBConsumerAlwaysNonNil(t *testing.T) {
 	p := mbtrics.NewPlugin()
-	if p.DBConsumer() != nil {
-		t.Fatal("DBConsumer() should be nil when extension is not enabled in config")
+	if p.DBConsumer() == nil {
+		t.Fatal("DBConsumer() should always return a consumer; DB registry handles availability")
 	}
 }
 
