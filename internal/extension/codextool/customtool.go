@@ -86,16 +86,10 @@ func BuildToolMapFromCore(original []format.CoreTool) ToolMap {
 		if kind == "" {
 			continue
 		}
-		spec := ToolSpec{
+		m[t.Name] = ToolSpec{
 			Kind:       ToolKind(kind),
 			OpenAIName: openaiName,
 			Namespace:  ns,
-		}
-		m[t.Name] = spec
-		// Register original name as alias so the model can call either
-		// the proxy name (apply_patch_add_file) or the original (apply_patch).
-		if openaiName != "" && openaiName != t.Name {
-			m[openaiName] = spec
 		}
 	}
 	return m
