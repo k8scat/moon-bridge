@@ -86,10 +86,16 @@ func BuildToolMapFromCore(original []format.CoreTool) ToolMap {
 		if kind == "" {
 			continue
 		}
-		m[t.Name] = ToolSpec{
+		spec := ToolSpec{
 			Kind:       ToolKind(kind),
 			OpenAIName: openaiName,
 			Namespace:  ns,
+		}
+		m[t.Name] = spec
+		// Register original name as alias so the model can call either
+		// the proxy name (apply_patch_add_file) or the original (apply_patch).
+		if openaiName != "" && openaiName != t.Name {
+			m[openaiName] = spec
 		}
 	}
 	return m
@@ -110,10 +116,8 @@ func OutputItemFromBlock(
 	switch spec.Kind {
 	case ToolLocalShell:
 		return "local_shell_call", "", "", "", true, toolInput
-	case ToolApplyPatch:
-		return "custom_tool_call", spec.OpenAIName, "", RebuildApplyPatchGrammar(blockName, toolInput), false, nil
-	case ToolExec:
-		return "custom_tool_call", spec.OpenAIName, "", RebuildExecGrammar(toolInput), false, nil
+	case ToolApplyPatch, ToolExec:
+		return "custom_tool_call", spec.OpenAIName, "", RebuildGrammar(blockName, toolInput), false, nil
 	case ToolRaw:
 		return "custom_tool_call", spec.OpenAIName, "", InputFromRaw(toolInput), false, nil
 	case ToolFunction:
@@ -466,10 +470,19 @@ func RebuildExecGrammar(input json.RawMessage) string {
 // RebuildGrammar auto-detects the tool type from the proxy tool name and
 // reconstructs the raw grammar input for custom_tool_call from structured arguments.
 func RebuildGrammar(proxyName string, input json.RawMessage) string {
-	if strings.HasPrefix(proxyName, "apply_patch") {
+	// If the model calls the proxy-expanded name (e.g. apply_patch_add_file),
+	// reconstruct grammar from structured params. If calling the original name
+	// (apply_patch), input is already raw grammar — extract via InputFromRaw.
+	if strings.HasPrefix(proxyName, "apply_patch_") {
 		return RebuildApplyPatchGrammar(proxyName, input)
 	}
-	if proxyName == "exec" || strings.HasPrefix(proxyName, "exec_") {
+	if proxyName == "apply_patch" {
+		return InputFromRaw(input)
+	}
+	if proxyName == "exec" {
+		return InputFromRaw(input)
+	}
+	if strings.HasPrefix(proxyName, "exec_") {
 		return RebuildExecGrammar(input)
 	}
 	return string(input)
