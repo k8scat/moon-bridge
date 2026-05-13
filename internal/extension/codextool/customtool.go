@@ -463,3 +463,14 @@ func RebuildExecGrammar(input json.RawMessage) string {
 	}
 	return p.Source
 }
+// RebuildGrammar auto-detects the tool type from the proxy tool name and
+// reconstructs the raw grammar input for custom_tool_call from structured arguments.
+func RebuildGrammar(proxyName string, input json.RawMessage) string {
+	if strings.HasPrefix(proxyName, "apply_patch") {
+		return RebuildApplyPatchGrammar(proxyName, input)
+	}
+	if proxyName == "exec" || strings.HasPrefix(proxyName, "exec_") {
+		return RebuildExecGrammar(input)
+	}
+	return string(input)
+}

@@ -365,6 +365,7 @@ func (a *OpenAIAdapter) streamLoop(ctx context.Context, coreReq *format.CoreRequ
 	}
 	contentText := make(map[int]string)
 	toolCallArgs := make(map[int]string)
+	toolBlockNames := make(map[int]string)
 	outputIndexes := make(map[int]int)
 	itemIDs := make(map[int]string)
 	reasonIndexes := make(map[int]bool)
@@ -463,6 +464,7 @@ func (a *OpenAIAdapter) streamLoop(ctx context.Context, coreReq *format.CoreRequ
 					toolUseID = fmt.Sprintf("call_%d", index)
 				}
 				itemIDs[index] = fmt.Sprintf("fc_item_%d", index)
+				toolBlockNames[index] = event.ContentBlock.ToolName
 				item := buildToolOutputItemStreaming(event.ContentBlock, coreReq.Extensions, toolUseID)
 				outputIndexes[index] = len(response.Output)
 				response.Output = append(response.Output, item)
@@ -633,6 +635,11 @@ func (a *OpenAIAdapter) streamLoop(ctx context.Context, coreReq *format.CoreRequ
 			if idx, ok := outputIndexes[index]; ok && idx < len(response.Output) {
 				response.Output[idx].Arguments = event.Delta
 				response.Output[idx].Status = "completed"
+				if response.Output[idx].Type == "custom_tool_call" {
+					if bn, ok := toolBlockNames[index]; ok && event.Delta != "" {
+						response.Output[idx].Input = codextool.RebuildGrammar(bn, json.RawMessage(event.Delta))
+					}
+				}
 			}
 			send(StreamEvent{
 				Event: "response.function_call_arguments.done",
@@ -843,6 +850,12 @@ func (a *OpenAIAdapter) streamLoop(ctx context.Context, coreReq *format.CoreRequ
 						response.Output[idx].Arguments = finalArgs
 					}
 					response.Output[idx].Status = "completed"
+					// Rebuild raw grammar for custom_tool_call items from accumulated args.
+					if response.Output[idx].Type == "custom_tool_call" {
+						if bn, ok := toolBlockNames[index]; ok && finalArgs != "" {
+							response.Output[idx].Input = codextool.RebuildGrammar(bn, json.RawMessage(finalArgs))
+						}
+					}
 				}
 
 				// function_call_arguments.done
@@ -870,6 +883,7 @@ func (a *OpenAIAdapter) streamLoop(ctx context.Context, coreReq *format.CoreRequ
 
 				// Clean up state.
 				delete(toolCallArgs, index)
+				delete(toolBlockNames, index)
 			}
 
 		case format.CoreItemAdded:
