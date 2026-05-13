@@ -228,14 +228,7 @@ func (a *OpenAIAdapter) FromCoreResponse(ctx context.Context, resp *format.CoreR
 					})
 					textParts = textParts[:0]
 				}
-				output = append(output, OutputItem{
-					Type:      "function_call",
-					ID:        block.ToolUseID,
-					CallID:    block.ToolUseID,
-					Name:      block.ToolName,
-					Arguments: toolInputString(block.ToolInput),
-					Status:    "completed",
-				})
+				output = append(output, buildToolOutputItem(block, resp.Extensions))
 
 			case "tool_result":
 				// Tool results don't translate to output items in the response.
@@ -470,14 +463,7 @@ func (a *OpenAIAdapter) streamLoop(ctx context.Context, coreReq *format.CoreRequ
 					toolUseID = fmt.Sprintf("call_%d", index)
 				}
 				itemIDs[index] = fmt.Sprintf("fc_item_%d", index)
-				item := OutputItem{
-					Type:      "function_call",
-					ID:        toolUseID,
-					CallID:    toolUseID,
-					Name:      event.ContentBlock.ToolName,
-					Arguments: toolInputString(event.ContentBlock.ToolInput),
-					Status:    "in_progress",
-				}
+				item := buildToolOutputItemStreaming(event.ContentBlock, coreReq.Extensions, toolUseID)
 				outputIndexes[index] = len(response.Output)
 				response.Output = append(response.Output, item)
 				send(StreamEvent{
