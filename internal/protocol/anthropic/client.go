@@ -67,6 +67,14 @@ func (client *Client) CreateMessage(ctx context.Context, request MessageRequest)
 	log := slog.Default().With("model", request.Model)
 	log.Debug("正在创建消息", "max_tokens", request.MaxTokens, "messages", len(request.Messages), "tools", len(request.Tools))
 
+	tools := make([]Tool, 0)
+	for _, tool := range request.Tools {
+		if tool.Name != "" {
+			tools = append(tools, tool)
+		}
+	}
+	request.Tools = tools
+
 	httpRequest, err := client.newRequest(ctx, request)
 	if err != nil {
 		log.Error("构建请求失败", "error", err)
@@ -105,6 +113,14 @@ func (client *Client) StreamMessage(ctx context.Context, request MessageRequest)
 	request.Stream = true
 	log := slog.Default().With("model", request.Model)
 	log.Debug("开始流式传输", "max_tokens", request.MaxTokens, "messages", len(request.Messages), "tools", len(request.Tools))
+
+	tools := make([]Tool, 0)
+	for _, tool := range request.Tools {
+		if tool.Name != "" {
+			tools = append(tools, tool)
+		}
+	}
+	request.Tools = tools
 
 	httpRequest, err := client.newRequest(ctx, request)
 	if err != nil {
